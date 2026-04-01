@@ -6,6 +6,8 @@ This document shows how to deploy the Pulse operator with Helm and how to create
 
 The generated Helm chart lives in `dist/chart`.
 
+Tagged releases also publish a packaged chart as a GitHub Release asset, along with a versioned install manifest.
+
 ## Basic Install
 
 For a public controller image and a public probe runner image:

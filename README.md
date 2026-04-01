@@ -168,3 +168,11 @@ For a fully in-cluster deployment, the cluster still needs access to a real prob
 ## License
 
 This repository is licensed under the Apache License 2.0. See `LICENSE`.
+
+## Releases
+
+Pushing a version tag such as `v0.2.0` publishes the controller and probe-runner images to GHCR and creates a GitHub Release with:
+
+- a versioned install manifest
+- a packaged Helm chart
+- a checksums file for the release assets
