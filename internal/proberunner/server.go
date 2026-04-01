@@ -56,7 +56,9 @@ func NewServeMux(runner *Runner, logger logr.Logger, gatherer prometheus.Gathere
 	// /healthz — basic liveness probe for Kubernetes.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			logger.Info("Failed to write health response", "error", err)
+		}
 	})
 
 	return mux

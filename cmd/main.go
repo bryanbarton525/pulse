@@ -84,7 +84,8 @@ func main() {
 		"The directory that contains the metrics server certificate.")
 	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
-	flag.StringVar(&probeRunnerImage, "probe-runner-image", envOrDefault("PULSE_PROBE_RUNNER_IMAGE", "pulse-probe-runner:latest"),
+	defaultProbeRunnerImage := envOrDefault("PULSE_PROBE_RUNNER_IMAGE", "pulse-probe-runner:latest")
+	flag.StringVar(&probeRunnerImage, "probe-runner-image", defaultProbeRunnerImage,
 		"Container image for the probe runner Deployment.")
 	flag.StringVar(&probeRunnerResultsURL, "probe-runner-results-url", os.Getenv("PULSE_PROBE_RUNNER_RESULTS_URL"),
 		"Optional override for the probe runner /results URL. Useful when the controller runs outside the cluster.")

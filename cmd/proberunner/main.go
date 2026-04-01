@@ -9,7 +9,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -20,7 +19,8 @@ import (
 func main() {
 	var configPath string
 	var listenAddr string
-	flag.StringVar(&configPath, "config", "/etc/pulse/probes.yaml", "Path to the probe config file (mounted from ConfigMap).")
+	flag.StringVar(&configPath, "config", "/etc/pulse/probes.yaml",
+		"Path to the probe config file (mounted from ConfigMap).")
 	flag.StringVar(&listenAddr, "listen", ":9090", "Address to serve /metrics and /results on.")
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
@@ -86,7 +86,7 @@ func main() {
 	// ConfigMap volume mounts use symlinks that get atomically swapped.
 	// fsnotify doesn't reliably detect symlink target changes across
 	// all platforms. Polling every 5s is simple and reliable.
-	go watchConfigReload(ctx, configPath, runner, logger)
+	go watchConfigReload(ctx, configPath, runner)
 
 	// ── Graceful shutdown ────────────────────────────────────
 	//
@@ -117,7 +117,8 @@ func main() {
 // When the ConfigMap is updated, Kubernetes creates a new timestamped directory,
 // then atomically swaps the ..data symlink. The file's ModTime changes, which
 // we detect here.
-func watchConfigReload(ctx context.Context, path string, runner *proberunner.Runner, logger logr.Logger) {
+func watchConfigReload(ctx context.Context, path string, runner *proberunner.Runner) {
+	logger := ctrl.Log.WithName("proberunner")
 	var lastModTime time.Time
 
 	// Get initial mod time.

@@ -210,7 +210,9 @@ func (r *Runner) executeCheck(probe Probe) {
 		r.checkHealthy.WithLabelValues(probe.Name).Set(0)
 		logger.Info("Check failed", "error", err, "duration", duration)
 	} else {
-		resp.Body.Close()
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.Info("Failed to close response body", "error", closeErr)
+		}
 		result.StatusCode = resp.StatusCode
 
 		if resp.StatusCode == probe.ExpectedStatus {
