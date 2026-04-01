@@ -1,0 +1,25 @@
+# Example HttpCanary resource.
+#
+# Apply this to a cluster that has the Pulse operator running:
+#   kubectl apply -f config/samples/canary_v1alpha1_httpcanary.yaml
+#
+# Then watch the controller reconcile it:
+#   kubectl get httpcanaries -w
+#
+# You should see the Phase column change from empty → Healthy (or Unhealthy).
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata:
+  name: sample-http-check
+  namespace: default
+spec:
+  # The endpoint to monitor. This is a public test service that
+  # returns whatever status code you put in the URL path.
+  url: "https://httpbin.org/status/200"
+
+  # How often (in seconds) to run the check. Minimum is 5.
+  interval: 30
+
+  # The HTTP status code that means "healthy". If the endpoint
+  # returns anything else, the canary is marked Unhealthy.
+  expectedStatus: 200

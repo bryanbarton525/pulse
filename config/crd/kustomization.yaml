@@ -1,0 +1,8 @@
+# This kustomization.yaml tells Kustomize which CRD base files to include.
+# When you run `make install`, it runs `kustomize build config/crd`,
+# which reads THIS file to discover the CRD YAML to apply to the cluster.
+#
+# As you add more canary types (TcpCanary, GrpcCanary, etc.), each will
+# get its own generated file in bases/ and you'll add it here.
+resources:
+- bases/canary.iambarton.com_httpcanaries.yaml

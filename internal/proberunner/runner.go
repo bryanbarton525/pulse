@@ -1,0 +1,235 @@
+package proberunner
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/go-logr/logr"
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+// ProbeResult holds the outcome of the most recent check for one probe.
+// The /results endpoint serializes a map of these to JSON.
+type ProbeResult struct {
+	Name           string    `json:"name"`
+	Healthy        bool      `json:"healthy"`
+	StatusCode     int       `json:"statusCode"`
+	LastCheckTime  time.Time `json:"lastCheckTime"`
+	Message        string    `json:"message"`
+	URL            string    `json:"url"`
+	ExpectedStatus int       `json:"expectedStatus"`
+}
+
+// Runner manages the lifecycle of all probe goroutines.
+//
+// Architecture:
+//   - One goroutine per Probe, each with its own ticker
+//   - Results stored in a thread-safe map
+//   - Reload() cancels all goroutines and starts fresh from new config
+//   - The HTTP server reads results via GetResults() (concurrent-safe)
+type Runner struct {
+	// mu protects the results map.
+	// RWMutex allows multiple readers (HTTP server serving /results)
+	// without blocking each other — only writers (probe goroutines
+	// recording a check result) need exclusive access.
+	mu      sync.RWMutex
+	results map[string]*ProbeResult
+
+	// cancel stops all running probe goroutines.
+	// Called during Reload() or shutdown.
+	cancel context.CancelFunc
+
+	logger logr.Logger
+
+	// Prometheus metrics — registered once, updated by every check.
+	checkTotal    *prometheus.CounterVec
+	checkDuration *prometheus.HistogramVec
+	checkHealthy  *prometheus.GaugeVec
+}
+
+// NewRunner creates a Runner and registers Prometheus metrics.
+//
+// Why register metrics here and not globally?
+// Because the runner owns the check lifecycle — it's the only thing
+// that should be recording check metrics. If we registered globally,
+// we'd risk double-registration panics if NewRunner is called twice.
+func NewRunner(logger logr.Logger, reg prometheus.Registerer) *Runner {
+	checkTotal := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "pulse_canary_checks_total",
+			Help: "Total number of canary checks executed, labeled by probe name and result.",
+		},
+		[]string{"probe", "result"}, // result: "success" or "failure"
+	)
+
+	checkDuration := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "pulse_canary_check_duration_seconds",
+			Help:    "Duration of canary HTTP checks in seconds.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"probe"},
+	)
+
+	checkHealthy := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "pulse_canary_healthy",
+			Help: "Whether the canary is currently healthy (1) or unhealthy (0).",
+		},
+		[]string{"probe"},
+	)
+
+	reg.MustRegister(checkTotal, checkDuration, checkHealthy)
+
+	return &Runner{
+		results:       make(map[string]*ProbeResult),
+		logger:        logger,
+		checkTotal:    checkTotal,
+		checkDuration: checkDuration,
+		checkHealthy:  checkHealthy,
+	}
+}
+
+// Start launches a goroutine for each probe in the config.
+//
+// Each goroutine:
+//  1. Runs the check immediately (don't wait for the first tick)
+//  2. Then ticks every Interval seconds
+//  3. Stops when ctx is cancelled (via Reload or shutdown)
+func (r *Runner) Start(ctx context.Context, config *ProbeConfig) {
+	// Create a cancellable child context so we can stop all probes on reload.
+	ctx, cancel := context.WithCancel(ctx)
+	r.cancel = cancel
+
+	for _, probe := range config.Probes {
+		// IMPORTANT: capture the loop variable.
+		// Without this, all goroutines would share the same `probe` pointer
+		// and would all check the last probe in the slice.
+		p := probe
+		go r.runProbe(ctx, p)
+	}
+
+	r.logger.Info("Started probe runner", "probeCount", len(config.Probes))
+}
+
+// Reload stops all current probes and starts new ones from fresh config.
+//
+// This is called when the ConfigMap file changes (detected by a file watcher
+// or periodic re-read). All old goroutines are cancelled, results are cleared,
+// and new goroutines are started.
+func (r *Runner) Reload(ctx context.Context, config *ProbeConfig) {
+	r.logger.Info("Reloading probe configuration", "probeCount", len(config.Probes))
+
+	// Stop all existing probe goroutines.
+	if r.cancel != nil {
+		r.cancel()
+	}
+
+	// Clear stale results — probes that were removed shouldn't linger.
+	r.mu.Lock()
+	r.results = make(map[string]*ProbeResult)
+	r.mu.Unlock()
+
+	r.Start(ctx, config)
+}
+
+// GetResults returns a snapshot of all current probe results.
+// Called by the HTTP server when serving GET /results.
+//
+// We return a copy (slice, not the map reference) so the caller
+// can serialize to JSON without holding the lock.
+func (r *Runner) GetResults() []ProbeResult {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	results := make([]ProbeResult, 0, len(r.results))
+	for _, result := range r.results {
+		results = append(results, *result)
+	}
+	return results
+}
+
+// Stop cancels all running probe goroutines.
+func (r *Runner) Stop() {
+	if r.cancel != nil {
+		r.cancel()
+	}
+}
+
+// runProbe executes a single probe's check loop.
+// Runs in its own goroutine. Exits when ctx is cancelled.
+func (r *Runner) runProbe(ctx context.Context, probe Probe) {
+	logger := r.logger.WithValues("probe", probe.Name, "url", probe.URL)
+	logger.Info("Starting probe")
+
+	// Run immediately on startup — don't wait for the first tick.
+	r.executeCheck(probe)
+
+	ticker := time.NewTicker(time.Duration(probe.Interval) * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("Probe stopped")
+			return
+		case <-ticker.C:
+			r.executeCheck(probe)
+		}
+	}
+}
+
+// executeCheck performs one HTTP check and records the result.
+func (r *Runner) executeCheck(probe Probe) {
+	logger := r.logger.WithValues("probe", probe.Name)
+
+	start := time.Now()
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+
+	resp, err := httpClient.Get(probe.URL)
+	duration := time.Since(start)
+
+	// Record the duration metric regardless of success/failure.
+	r.checkDuration.WithLabelValues(probe.Name).Observe(duration.Seconds())
+
+	result := &ProbeResult{
+		Name:           probe.Name,
+		URL:            probe.URL,
+		ExpectedStatus: probe.ExpectedStatus,
+		LastCheckTime:  time.Now(),
+	}
+
+	if err != nil {
+		result.Healthy = false
+		result.StatusCode = 0
+		result.Message = fmt.Sprintf("HTTP request failed: %v", err)
+		r.checkTotal.WithLabelValues(probe.Name, "failure").Inc()
+		r.checkHealthy.WithLabelValues(probe.Name).Set(0)
+		logger.Info("Check failed", "error", err, "duration", duration)
+	} else {
+		resp.Body.Close()
+		result.StatusCode = resp.StatusCode
+
+		if resp.StatusCode == probe.ExpectedStatus {
+			result.Healthy = true
+			result.Message = fmt.Sprintf("Got expected status %d", resp.StatusCode)
+			r.checkTotal.WithLabelValues(probe.Name, "success").Inc()
+			r.checkHealthy.WithLabelValues(probe.Name).Set(1)
+			logger.Info("Check passed", "status", resp.StatusCode, "duration", duration)
+		} else {
+			result.Healthy = false
+			result.Message = fmt.Sprintf("Expected %d but got %d", probe.ExpectedStatus, resp.StatusCode)
+			r.checkTotal.WithLabelValues(probe.Name, "failure").Inc()
+			r.checkHealthy.WithLabelValues(probe.Name).Set(0)
+			logger.Info("Check failed", "expected", probe.ExpectedStatus, "got", resp.StatusCode, "duration", duration)
+		}
+	}
+
+	// Store the result — this is what /results serves.
+	r.mu.Lock()
+	r.results[probe.Name] = result
+	r.mu.Unlock()
+}

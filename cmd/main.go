@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -34,6 +35,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+
+	canaryv1alpha1 "github.com/bryanbarton525/pulse/api/v1alpha1"
+	"github.com/bryanbarton525/pulse/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -45,6 +49,11 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
+	// Register our custom CRD types so the manager can serialize/deserialize them.
+	// Without this line, the manager would panic when it encounters an HttpCanary
+	// object from the API server — it wouldn't know what Go struct to map it to.
+	utilruntime.Must(canaryv1alpha1.AddToScheme(scheme))
+
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -55,6 +64,7 @@ func main() {
 	var webhookCertPath, webhookCertName, webhookCertKey string
 	var enableLeaderElection bool
 	var probeAddr string
+	var probeRunnerImage string
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
@@ -73,6 +83,8 @@ func main() {
 		"The directory that contains the metrics server certificate.")
 	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
+	flag.StringVar(&probeRunnerImage, "probe-runner-image", "pulse-probe-runner:latest",
+		"Container image for the probe runner Deployment.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	opts := zap.Options{
@@ -175,6 +187,44 @@ func main() {
 	}
 
 	// +kubebuilder:scaffold:builder
+
+	// Determine the namespace where infrastructure resources (ConfigMap, Deployment,
+	// Service) will be created. In-cluster, POD_NAMESPACE is set by the Kubernetes
+	// downward API. When running locally with `make run`, it defaults to "pulse-system".
+	namespace := os.Getenv("POD_NAMESPACE")
+	if namespace == "" {
+		namespace = "pulse-system"
+	}
+
+	// Register the HttpCanary controller with the manager.
+	//
+	// The reconciler now needs extra config beyond Client/Scheme:
+	//   - Namespace: where to create the ConfigMap, Deployment, and Service
+	//   - ProbeRunnerImage: what image the Deployment should run
+	if err := (&controller.HttpCanaryReconciler{
+		Client:           mgr.GetClient(),
+		Scheme:           mgr.GetScheme(),
+		Namespace:        namespace,
+		ProbeRunnerImage: probeRunnerImage,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "HttpCanary")
+		os.Exit(1)
+	}
+
+	// Register the StatusSyncer as a manager Runnable.
+	//
+	// This runs as a separate goroutine alongside the controller. It polls
+	// the probe runner's /results endpoint on a fixed interval and updates
+	// each HttpCanary CR's .status. Separated from the reconciler so that
+	// status polling runs exactly ONCE per interval, not once per CR.
+	if err := mgr.Add(&controller.StatusSyncer{
+		Client:    mgr.GetClient(),
+		Namespace: namespace,
+		Interval:  15 * time.Second,
+	}); err != nil {
+		setupLog.Error(err, "Failed to register status syncer")
+		os.Exit(1)
+	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "Failed to set up health check")
