@@ -1,5 +1,9 @@
 # Pulse
 
+<p align="center">
+  <img src="docs/logo.jpg" alt="Pulse logo" width="480">
+</p>
+
 Pulse is a Kubernetes operator that lets developers define canary health checks as custom resources. Apply a YAML file, and Pulse continuously monitors your endpoints and reports status back on the CR.
 
 Pulse supports both simple single-request checks and scripted multi-step HTTP journeys for login, session, and checkout-style flows.
