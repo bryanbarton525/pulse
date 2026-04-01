@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"os"
@@ -111,9 +112,7 @@ func NewRunner(logger logr.Logger, reg prometheus.Registerer, authStore AuthStor
 
 func (r *Runner) setAuthStore(authStore AuthStore) {
 	values := map[string]string{}
-	for key, value := range authStore.Values {
-		values[key] = value
-	}
+	maps.Copy(values, authStore.Values)
 
 	r.authMu.Lock()
 	r.authStore = values
@@ -774,9 +773,7 @@ func (r *Runner) credentialValue(id string) (string, error) {
 
 func defaultMCPHeaders(headers map[string]string) map[string]string {
 	merged := map[string]string{}
-	for key, value := range headers {
-		merged[key] = value
-	}
+	maps.Copy(merged, headers)
 	if !hasHeader(merged, "Content-Type") {
 		merged["Content-Type"] = "application/json"
 	}

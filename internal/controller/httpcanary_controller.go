@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	"gopkg.in/yaml.v3"
 	appsv1 "k8s.io/api/apps/v1"
@@ -258,9 +259,7 @@ func (r *HttpCanaryReconciler) populateProbeAuth(
 		}
 
 		config.Probes[index].Auth = probeAuth
-		for key, value := range values {
-			authStore.Values[key] = value
-		}
+		maps.Copy(authStore.Values, values)
 	}
 }
 
