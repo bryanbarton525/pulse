@@ -14,8 +14,8 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  CONTROLLER_IMAGE_NAME: bryanbarton525/pulse-controller
-  PROBE_RUNNER_IMAGE_NAME: bryanbarton525/pulse-probe-runner
+  CONTROLLER_IMAGE_BASENAME: pulse-controller
+  PROBE_RUNNER_IMAGE_BASENAME: pulse-probe-runner
 
 jobs:
   publish:
@@ -25,6 +25,13 @@ jobs:
     steps:
       - name: Clone the code
         uses: actions/checkout@v4
+
+      - name: Derive image repository names
+        id: image-names
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "controller=${{ env.REGISTRY }}/${owner}/${{ env.CONTROLLER_IMAGE_BASENAME }}" >> "$GITHUB_OUTPUT"
+          echo "probe_runner=${{ env.REGISTRY }}/${owner}/${{ env.PROBE_RUNNER_IMAGE_BASENAME }}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -40,7 +47,7 @@ jobs:
         id: controller-meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.CONTROLLER_IMAGE_NAME }}
+          images: ${{ steps.image-names.outputs.controller }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag
@@ -50,7 +57,7 @@ jobs:
         id: probe-runner-meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.PROBE_RUNNER_IMAGE_NAME }}
+          images: ${{ steps.image-names.outputs.probe_runner }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag
@@ -88,6 +95,12 @@ jobs:
       - name: Clone the code
         uses: actions/checkout@v4
 
+      - name: Derive controller image name
+        id: image-names
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "controller=${{ env.REGISTRY }}/${owner}/${{ env.CONTROLLER_IMAGE_BASENAME }}" >> "$GITHUB_OUTPUT"
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -99,7 +112,7 @@ jobs:
       - name: Build release artifacts
         env:
           VERSION: ${{ github.ref_name }}
-          IMG: ghcr.io/${{ env.CONTROLLER_IMAGE_NAME }}:${{ github.ref_name }}
+          IMG: ${{ steps.image-names.outputs.controller }}:${{ github.ref_name }}
         run: |
           set -euo pipefail
           RELEASE_VERSION="${VERSION#v}"

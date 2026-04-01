@@ -76,7 +76,6 @@ jobs:
       - name: Wait for operator pods
         run: |
           kubectl rollout status deployment/pulse-controller-manager -n pulse-system --timeout=180s
-          kubectl rollout status deployment/pulse-probe-runner -n pulse-system --timeout=180s
 
       - name: Apply sample canaries
         run: |
@@ -86,6 +85,20 @@ jobs:
           kubectl apply -f config/samples/canary_v1alpha1_httpcanary_ui_login.yaml
           kubectl apply -f config/samples/canary_v1alpha1_httpcanary_api_readiness.yaml
           kubectl apply -f config/samples/canary_v1alpha1_httpcanary_checkout_entry.yaml
+
+      - name: Wait for probe runner deployment
+        run: |
+          deadline=$((SECONDS + 180))
+          while [ $SECONDS -lt $deadline ]; do
+            if kubectl get deployment/pulse-probe-runner -n pulse-system >/dev/null 2>&1; then
+              kubectl rollout status deployment/pulse-probe-runner -n pulse-system --timeout=180s
+              exit 0
+            fi
+            sleep 5
+          done
+          kubectl get deployments -n pulse-system
+          kubectl logs deployment/pulse-controller-manager -n pulse-system --all-containers=true || true
+          exit 1
 
       - name: Wait for sample canary statuses
         run: |
