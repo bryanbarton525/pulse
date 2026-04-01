@@ -3,10 +3,12 @@ package proberunner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +43,7 @@ type Runner struct {
 	// recording a check result) need exclusive access.
 	mu      sync.RWMutex
 	results map[string]*ProbeResult
+	emitMu  sync.Mutex
 
 	// cancel stops all running probe goroutines.
 	// Called during Reload() or shutdown.
@@ -52,6 +55,7 @@ type Runner struct {
 	checkTotal    *prometheus.CounterVec
 	checkDuration *prometheus.HistogramVec
 	checkHealthy  *prometheus.GaugeVec
+	stdoutWriter  io.Writer
 }
 
 // NewRunner creates a Runner and registers Prometheus metrics.
@@ -94,6 +98,7 @@ func NewRunner(logger logr.Logger, reg prometheus.Registerer) *Runner {
 		checkTotal:    checkTotal,
 		checkDuration: checkDuration,
 		checkHealthy:  checkHealthy,
+		stdoutWriter:  os.Stdout,
 	}
 }
 
@@ -193,7 +198,7 @@ func (r *Runner) executeCheck(probe Probe) {
 	start := time.Now()
 	httpClient, err := newHTTPClient()
 	if err != nil {
-		r.recordResult(probe.Name, &ProbeResult{
+		result := &ProbeResult{
 			Name:           probe.Name,
 			Healthy:        false,
 			StatusCode:     0,
@@ -201,30 +206,79 @@ func (r *Runner) executeCheck(probe Probe) {
 			Message:        fmt.Sprintf("Failed to create HTTP client: %v", err),
 			URL:            probe.URL,
 			ExpectedStatus: probe.ExpectedStatus,
-		})
-		r.checkDuration.WithLabelValues(probe.Name).Observe(time.Since(start).Seconds())
-		r.checkTotal.WithLabelValues(probe.Name, "failure").Inc()
-		r.checkHealthy.WithLabelValues(probe.Name).Set(0)
+		}
+		r.recordResult(probe.Name, result)
+		r.emitResult(probe, result, time.Since(start))
 		logger.Info("Check failed", "error", err, "duration", time.Since(start))
 		return
 	}
 
 	result := r.executeProbe(httpClient, probe)
 	duration := time.Since(start)
-
-	// Record the duration metric regardless of success/failure.
-	r.checkDuration.WithLabelValues(probe.Name).Observe(duration.Seconds())
+	r.recordResult(probe.Name, result)
+	r.emitResult(probe, result, duration)
 	if result.Healthy {
-		r.checkTotal.WithLabelValues(probe.Name, "success").Inc()
-		r.checkHealthy.WithLabelValues(probe.Name).Set(1)
 		logger.Info("Check passed", "status", result.StatusCode, "duration", duration)
-	} else {
-		r.checkTotal.WithLabelValues(probe.Name, "failure").Inc()
-		r.checkHealthy.WithLabelValues(probe.Name).Set(0)
-		logger.Info("Check failed", "status", result.StatusCode, "message", result.Message, "duration", duration)
+		return
 	}
 
-	r.recordResult(probe.Name, result)
+	logger.Info("Check failed", "status", result.StatusCode, "message", result.Message, "duration", duration)
+}
+
+func (r *Runner) emitResult(probe Probe, result *ProbeResult, duration time.Duration) {
+	if shouldEmitPrometheus(probe.Outputs) {
+		r.checkDuration.WithLabelValues(probe.Name).Observe(duration.Seconds())
+		if result.Healthy {
+			r.checkTotal.WithLabelValues(probe.Name, "success").Inc()
+			r.checkHealthy.WithLabelValues(probe.Name).Set(1)
+		} else {
+			r.checkTotal.WithLabelValues(probe.Name, "failure").Inc()
+			r.checkHealthy.WithLabelValues(probe.Name).Set(0)
+		}
+	}
+
+	if shouldEmitStdout(probe.Outputs) {
+		r.writeStdoutResult(result)
+	}
+}
+
+func (r *Runner) writeStdoutResult(result *ProbeResult) {
+	payload, err := json.Marshal(result)
+	if err != nil {
+		r.logger.Error(err, "Failed to marshal probe result for stdout", "probe", result.Name)
+		return
+	}
+
+	r.emitMu.Lock()
+	defer r.emitMu.Unlock()
+
+	if _, err := fmt.Fprintln(r.stdoutWriter, string(payload)); err != nil {
+		r.logger.Error(err, "Failed to write probe result to stdout", "probe", result.Name)
+	}
+}
+
+func shouldEmitPrometheus(outputs []ProbeOutput) bool {
+	if len(outputs) == 0 {
+		return true
+	}
+
+	for _, output := range outputs {
+		if output.Type == ProbeOutputPrometheus {
+			return true
+		}
+	}
+
+	return false
+}
+
+func shouldEmitStdout(outputs []ProbeOutput) bool {
+	for _, output := range outputs {
+		if output.Type == ProbeOutputStdout {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (r *Runner) executeProbe(httpClient *http.Client, probe Probe) *ProbeResult {

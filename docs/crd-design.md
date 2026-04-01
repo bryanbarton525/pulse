@@ -28,6 +28,13 @@ All Pulse CRDs belong to the API group `canary.iambarton.com`. The current versi
 | `expectedStatus` | int | No | 200 | 100-599 | HTTP status code that means healthy |
 | `containsText` | string | No | — | — | Required response-body substring for simple single-request mode |
 | `journey` | []HttpCanaryStep | No | — | step `name` and `url` required | Ordered multi-step HTTP journey |
+| `outputs` | []HttpCanaryOutput | No | `[{type: prometheus}]` | `type` must be `prometheus` or `stdout` | Per-canary telemetry sinks |
+
+### HttpCanaryOutput Fields
+
+| Field | Type | Required | Default | Validation | Description |
+|-------|------|----------|---------|------------|-------------|
+| `type` | string | Yes | — | `prometheus`, `stdout` | Where Pulse emits probe telemetry for the canary |
 
 ### HttpCanaryStep Fields
 
@@ -47,6 +54,8 @@ All Pulse CRDs belong to the API group `canary.iambarton.com`. The current versi
 - If `journey` is present, Pulse executes the steps in order and does not execute the top-level request fields.
 - Journey steps share cookies within a single check cycle, but not across intervals.
 - The top-level `url` remains required and is still the URL shown in `kubectl get httpcanaries`, so it should represent the canary's primary or final target.
+- If `outputs` is omitted, Pulse emits Prometheus metrics for backward compatibility.
+- `stdout` output writes one JSON line per check result, which can be collected by log-based agents such as Datadog daemonsets or sidecars.
 
 For step-by-step authoring guidance and examples, see [HTTP Journey Guide](http-journey-canary.md).
 
@@ -80,6 +89,8 @@ spec:
   url: "https://api.example.com/health"
   interval: 30
   expectedStatus: 200
+  outputs:
+    - type: prometheus
 ```
 
 ## Adding a New CRD

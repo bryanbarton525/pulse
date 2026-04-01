@@ -24,6 +24,10 @@ func TestBuildProbeConfigIncludesJourneyFields(t *testing.T) {
 				Interval:       30,
 				ExpectedStatus: 200,
 				ContainsText:   "dashboard",
+				Outputs: []canaryv1alpha1.HttpCanaryOutput{
+					{Type: canaryv1alpha1.HttpCanaryOutputPrometheus},
+					{Type: canaryv1alpha1.HttpCanaryOutputStdout},
+				},
 				Journey: []canaryv1alpha1.HttpCanaryStep{
 					{
 						Name:           "open-login",
@@ -68,6 +72,15 @@ func TestBuildProbeConfigIncludesJourneyFields(t *testing.T) {
 	}
 	if len(probe.Journey) != 2 {
 		t.Fatalf("probe journey length = %d, want 2", len(probe.Journey))
+	}
+	if len(probe.Outputs) != 2 {
+		t.Fatalf("probe outputs length = %d, want 2", len(probe.Outputs))
+	}
+	if probe.Outputs[0].Type != canaryv1alpha1.HttpCanaryOutputPrometheus {
+		t.Fatalf("first output type = %q, want %q", probe.Outputs[0].Type, canaryv1alpha1.HttpCanaryOutputPrometheus)
+	}
+	if probe.Outputs[1].Type != canaryv1alpha1.HttpCanaryOutputStdout {
+		t.Fatalf("second output type = %q, want %q", probe.Outputs[1].Type, canaryv1alpha1.HttpCanaryOutputStdout)
 	}
 	if probe.Journey[1].Method != "POST" {
 		t.Fatalf("second journey method = %q, want %q", probe.Journey[1].Method, "POST")

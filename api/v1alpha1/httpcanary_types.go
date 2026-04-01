@@ -4,6 +4,19 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	HttpCanaryOutputPrometheus = "prometheus"
+	HttpCanaryOutputStdout     = "stdout"
+)
+
+// HttpCanaryOutput defines one destination for canary execution telemetry.
+type HttpCanaryOutput struct {
+	// Type is the output sink for the canary.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=prometheus;stdout
+	Type string `json:"type"`
+}
+
 // HttpCanaryStep defines one HTTP request in a scripted journey.
 type HttpCanaryStep struct {
 	// Name is a human-readable step label.
@@ -72,6 +85,10 @@ type HttpCanarySpec struct {
 
 	// Journey defines a scripted sequence of HTTP requests.
 	Journey []HttpCanaryStep `json:"journey,omitempty"`
+
+	// Outputs controls where probe execution telemetry is emitted.
+	// When omitted, the canary emits Prometheus metrics for backward compatibility.
+	Outputs []HttpCanaryOutput `json:"outputs,omitempty"`
 }
 
 // HttpCanaryStatus defines the observed state of HttpCanary.

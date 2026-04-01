@@ -140,6 +140,24 @@ spec:
                 - DELETE
                 - HEAD
                 type: string
+              outputs:
+                description: |-
+                  Outputs controls where probe execution telemetry is emitted.
+                  When omitted, the canary emits Prometheus metrics for backward compatibility.
+                items:
+                  description: HttpCanaryOutput defines one destination for canary
+                    execution telemetry.
+                  properties:
+                    type:
+                      description: Type is the output sink for the canary.
+                      enum:
+                      - prometheus
+                      - stdout
+                      type: string
+                  required:
+                  - type
+                  type: object
+                type: array
               url:
                 description: URL is the HTTP endpoint to check.
                 minLength: 1

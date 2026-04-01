@@ -185,10 +185,24 @@ func buildProbeConfig(canaries []canaryv1alpha1.HttpCanary) proberunner.ProbeCon
 			ExpectedStatus: c.Spec.ExpectedStatus,
 			ContainsText:   c.Spec.ContainsText,
 			Journey:        journey,
+			Outputs:        buildProbeOutputs(c.Spec.Outputs),
 		})
 	}
 
 	return config
+}
+
+func buildProbeOutputs(outputs []canaryv1alpha1.HttpCanaryOutput) []proberunner.ProbeOutput {
+	if len(outputs) == 0 {
+		return nil
+	}
+
+	probeOutputs := make([]proberunner.ProbeOutput, 0, len(outputs))
+	for _, output := range outputs {
+		probeOutputs = append(probeOutputs, proberunner.ProbeOutput{Type: output.Type})
+	}
+
+	return probeOutputs
 }
 
 // ensureDeployment creates or updates the probe runner Deployment.

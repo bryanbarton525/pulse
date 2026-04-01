@@ -37,6 +37,8 @@ spec:
   url: "https://api.example.com/health"
   interval: 30
   expectedStatus: 200
+  outputs:
+    - type: prometheus
 ```
 
 ```yaml
@@ -65,6 +67,27 @@ spec:
       containsText: "dashboard"
 ```
 
+```yaml
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata:
+  name: check-mcp-initialize
+spec:
+  url: "https://mcp.example.com/mcp"
+  interval: 30
+  method: POST
+  expectedStatus: 200
+  containsText: '"protocolVersion"'
+  headers:
+    Content-Type: application/json
+    Accept: application/json, text/event-stream
+  body: |
+    {"jsonrpc":"2.0","id":"pulse-initialize","method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"pulse","version":"0.1.0"}}}
+  outputs:
+    - type: prometheus
+    - type: stdout
+```
+
 ```
 $ kubectl get httpcanaries
 NAME            URL                                PHASE     AGE
@@ -76,12 +99,22 @@ check-my-api    https://api.example.com/health     Healthy   5m
 Pulse uses a split architecture for scalability:
 
 1. **Controller** watches HttpCanary CRs across all namespaces and manages a shared probe configuration (ConfigMap), a probe runner Deployment, and a Service
-2. **Probe Runner** reads the config, executes HTTP checks on each probe's interval, and exposes results via a `/results` endpoint
+2. **Probe Runner** reads the config, executes HTTP checks on each probe's interval, exposes `/results` for status sync, and can emit telemetry per canary to Prometheus, stdout, or both
 3. **Status Syncer** polls the runner every 15 seconds and writes results back to each CR's `.status`
 
 This separation keeps the operator lightweight (it never makes HTTP calls itself) and allows the probe runner to scale independently.
 
 For richer synthetics, the probe runner reuses one HTTP client and cookie jar per journey so multi-step session flows work without adding browser automation to the operator.
+
+## Output Sinks
+
+`HttpCanary.spec.outputs` controls where execution telemetry is emitted for each canary.
+
+- `prometheus` keeps the current behavior and exports probe metrics on the runner's `/metrics` endpoint
+- `stdout` writes one JSON result line per check, which is useful for log collection paths such as Datadog daemonsets or sidecars
+- Omitting `outputs` defaults to `prometheus` for backward compatibility
+
+The internal `/results` endpoint remains in place for the controller's status sync loop and is not configured per canary.
 
 ## Supported Canary Types
 
@@ -131,12 +164,13 @@ kubectl apply -f config/samples/canary_v1alpha1_httpcanary_unhealthy.yaml
 kubectl apply -f config/samples/canary_v1alpha1_httpcanary_ui_login.yaml
 kubectl apply -f config/samples/canary_v1alpha1_httpcanary_api_readiness.yaml
 kubectl apply -f config/samples/canary_v1alpha1_httpcanary_checkout_entry.yaml
+kubectl apply -f config/samples/canary_v1alpha1_httpcanary_mcp.yaml
 kubectl get httpcanaries -A
 ```
 
 If your GHCR packages are private, create a pull secret and pass `HELM_IMAGE_PULL_SECRET=ghcr-pull-secret`. See `docs/helm.md` for the full flow.
 
-The UI/login and checkout examples now exercise scripted HTTP journeys. They remain HTTP-only and do not execute browser-based automation.
+The UI/login and checkout examples exercise scripted HTTP journeys. The MCP sample shows an HTTP JSON-RPC initialize check against an MCP endpoint. These remain HTTP-only and do not execute browser-based automation.
 
 ## Cluster Validation
 

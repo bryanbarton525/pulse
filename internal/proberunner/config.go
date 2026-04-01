@@ -14,6 +14,16 @@ type ProbeConfig struct {
 	Probes []Probe `yaml:"probes"`
 }
 
+const (
+	ProbeOutputPrometheus = "prometheus"
+	ProbeOutputStdout     = "stdout"
+)
+
+// ProbeOutput defines one destination for probe execution telemetry.
+type ProbeOutput struct {
+	Type string `yaml:"type"`
+}
+
 // Probe represents a single HTTP check to execute.
 // Each field maps 1:1 to an HttpCanary CR's spec fields.
 //
@@ -29,6 +39,7 @@ type Probe struct {
 	ExpectedStatus int               `yaml:"expectedStatus"`
 	ContainsText   string            `yaml:"containsText,omitempty"`
 	Journey        []ProbeStep       `yaml:"journey,omitempty"`
+	Outputs        []ProbeOutput     `yaml:"outputs,omitempty"`
 }
 
 // ProbeStep represents one HTTP request in a scripted synthetic journey.

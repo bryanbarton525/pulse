@@ -41,6 +41,7 @@ Use `journey` when health depends on multiple requests sharing the same HTTP ses
 | `body` | No | Used by simple single-request mode only. |
 | `containsText` | No | Used by simple single-request mode only. |
 | `journey` | No | Ordered list of HTTP steps. When non-empty, Pulse executes the steps instead of the top-level request fields. |
+| `outputs` | No | Telemetry sinks for the canary. Use `prometheus`, `stdout`, or both. If omitted, Pulse defaults to `prometheus`. |
 
 ### Journey Step Fields
 
@@ -70,6 +71,7 @@ These details reflect the current implementation.
   - the response body contains `containsText`, when `containsText` is set
 - Pulse uses the standard Go HTTP client behavior, including automatic redirect following.
 - The runner uses a 10 second HTTP client timeout.
+- `stdout` output emits one JSON result line per check. `prometheus` output publishes metrics for the canary on `/metrics`.
 
 ## What Shows Up In Status
 

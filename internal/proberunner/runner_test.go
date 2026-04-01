@@ -1,6 +1,8 @@
 package proberunner
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -127,5 +129,69 @@ func TestExecuteJourneyReusesCookiesAcrossSteps(t *testing.T) {
 	}
 	if !strings.Contains(result.Message, "Synthetic journey succeeded") {
 		t.Fatalf("message = %q", result.Message)
+	}
+}
+
+func TestExecuteCheckStdoutOnlySkipsPrometheusAndWritesJSON(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	registry := prometheus.NewRegistry()
+	runner := NewRunner(logr.Discard(), registry)
+
+	var stdout bytes.Buffer
+	runner.stdoutWriter = &stdout
+
+	runner.executeCheck(Probe{
+		Name:           "default/stdout-only",
+		URL:            server.URL,
+		Interval:       30,
+		ExpectedStatus: http.StatusOK,
+		Outputs: []ProbeOutput{
+			{Type: ProbeOutputStdout},
+		},
+	})
+
+	metricFamilies, err := registry.Gather()
+	if err != nil {
+		t.Fatalf("Gather() error = %v", err)
+	}
+	for _, family := range metricFamilies {
+		for _, metric := range family.GetMetric() {
+			for _, label := range metric.GetLabel() {
+				if label.GetValue() == "default/stdout-only" {
+					t.Fatalf("unexpected prometheus metric for stdout-only probe in family %q", family.GetName())
+				}
+			}
+		}
+	}
+
+	output := strings.TrimSpace(stdout.String())
+	if output == "" {
+		t.Fatal("stdout output is empty")
+	}
+
+	var result ProbeResult
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatalf("stdout JSON unmarshal error = %v", err)
+	}
+	if result.Name != "default/stdout-only" {
+		t.Fatalf("stdout result name = %q, want %q", result.Name, "default/stdout-only")
+	}
+	if !result.Healthy {
+		t.Fatalf("stdout result healthy = false, message = %q", result.Message)
+	}
+}
+
+func TestShouldEmitPrometheusDefaultsToTrue(t *testing.T) {
+	t.Parallel()
+
+	if !shouldEmitPrometheus(nil) {
+		t.Fatal("shouldEmitPrometheus(nil) = false, want true")
 	}
 }
