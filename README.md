@@ -164,3 +164,7 @@ For a fully in-cluster deployment, the cluster still needs access to a real prob
 - **API Group:** `canary.iambarton.com`
 - **Built with:** Kubebuilder v4, controller-runtime v0.23
 - **Go version:** 1.25+
+
+## License
+
+This repository is licensed under the Apache License 2.0. See `LICENSE`.
