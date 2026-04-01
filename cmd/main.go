@@ -65,6 +65,7 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var probeRunnerImage string
+	var probeRunnerResultsURL string
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
@@ -83,8 +84,10 @@ func main() {
 		"The directory that contains the metrics server certificate.")
 	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
-	flag.StringVar(&probeRunnerImage, "probe-runner-image", "pulse-probe-runner:latest",
+	flag.StringVar(&probeRunnerImage, "probe-runner-image", envOrDefault("PULSE_PROBE_RUNNER_IMAGE", "pulse-probe-runner:latest"),
 		"Container image for the probe runner Deployment.")
+	flag.StringVar(&probeRunnerResultsURL, "probe-runner-results-url", os.Getenv("PULSE_PROBE_RUNNER_RESULTS_URL"),
+		"Optional override for the probe runner /results URL. Useful when the controller runs outside the cluster.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	opts := zap.Options{
@@ -218,9 +221,10 @@ func main() {
 	// each HttpCanary CR's .status. Separated from the reconciler so that
 	// status polling runs exactly ONCE per interval, not once per CR.
 	if err := mgr.Add(&controller.StatusSyncer{
-		Client:    mgr.GetClient(),
-		Namespace: namespace,
-		Interval:  15 * time.Second,
+		Client:     mgr.GetClient(),
+		Namespace:  namespace,
+		Interval:   15 * time.Second,
+		ResultsURL: probeRunnerResultsURL,
 	}); err != nil {
 		setupLog.Error(err, "Failed to register status syncer")
 		os.Exit(1)
@@ -240,4 +244,12 @@ func main() {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
 	}
+}
+
+func envOrDefault(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+
+	return fallback
 }

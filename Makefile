@@ -1,5 +1,8 @@
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
+PROBE_RUNNER_IMG ?= pulse-probe-runner:latest
+PROBE_RUNNER_IMAGE ?= $(PROBE_RUNNER_IMG)
+PROBE_RUNNER_RESULTS_URL ?=
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -108,9 +111,19 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 build: manifests generate fmt vet ## Build manager binary.
 	go build -o bin/manager cmd/main.go
 
+.PHONY: build-proberunner
+build-proberunner: manifests generate fmt vet ## Build probe runner binary.
+	go build -o bin/probe-runner cmd/proberunner/main.go
+
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
+	PULSE_PROBE_RUNNER_IMAGE="$${PULSE_PROBE_RUNNER_IMAGE:-$(PROBE_RUNNER_IMAGE)}" \
+	PULSE_PROBE_RUNNER_RESULTS_URL="$${PULSE_PROBE_RUNNER_RESULTS_URL:-$(PROBE_RUNNER_RESULTS_URL)}" \
 	go run ./cmd/main.go
+
+.PHONY: run-proberunner
+run-proberunner: manifests generate fmt vet ## Run the probe runner from your host.
+	go run ./cmd/proberunner/main.go
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
@@ -119,9 +132,17 @@ run: manifests generate fmt vet ## Run a controller from your host.
 docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} .
 
+.PHONY: docker-build-proberunner
+docker-build-proberunner: ## Build docker image with the probe runner.
+	$(CONTAINER_TOOL) build -f Dockerfile.proberunner -t ${PROBE_RUNNER_IMG} .
+
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
+
+.PHONY: docker-push-proberunner
+docker-push-proberunner: ## Push docker image with the probe runner.
+	$(CONTAINER_TOOL) push ${PROBE_RUNNER_IMG}
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
@@ -166,6 +187,13 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -
+	"$(KUBECTL)" -n pulse-system set env deployment/pulse-controller-manager \
+		PULSE_PROBE_RUNNER_IMAGE="$${PULSE_PROBE_RUNNER_IMAGE:-$(PROBE_RUNNER_IMAGE)}"
+	@results_url="$${PULSE_PROBE_RUNNER_RESULTS_URL:-$(PROBE_RUNNER_RESULTS_URL)}"; \
+	if [ -n "$$results_url" ]; then \
+		"$(KUBECTL)" -n pulse-system set env deployment/pulse-controller-manager \
+			PULSE_PROBE_RUNNER_RESULTS_URL="$$results_url"; \
+	fi
 
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.

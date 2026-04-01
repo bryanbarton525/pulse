@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"gopkg.in/yaml.v3"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -17,7 +18,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"gopkg.in/yaml.v3"
 
 	canaryv1alpha1 "github.com/bryanbarton525/pulse/api/v1alpha1"
 	"github.com/bryanbarton525/pulse/internal/proberunner"
@@ -318,15 +318,15 @@ func parseQuantity(s string) *resource.Quantity {
 //
 // Why this matters with thousands of canaries:
 //
-//   For() approach (what we had before):
-//     1,000 CRs change → 1,000 work queue entries → 1,000 Reconcile() calls
-//     Each one lists all CRs, rebuilds ConfigMap, ensures Deployment...
-//     = 1,000x redundant work
+//	For() approach (what we had before):
+//	  1,000 CRs change → 1,000 work queue entries → 1,000 Reconcile() calls
+//	  Each one lists all CRs, rebuilds ConfigMap, ensures Deployment...
+//	  = 1,000x redundant work
 //
-//   Watches() + single key approach:
-//     1,000 CRs change → 1,000 events → all map to same key → deduplicated to 1
-//     ONE Reconcile() call lists all CRs, rebuilds ConfigMap, ensures Deployment
-//     = 1x work
+//	Watches() + single key approach:
+//	  1,000 CRs change → 1,000 events → all map to same key → deduplicated to 1
+//	  ONE Reconcile() call lists all CRs, rebuilds ConfigMap, ensures Deployment
+//	  = 1x work
 //
 // The work queue deduplicates entries with the same key. By mapping every
 // HttpCanary event to the same NamespacedName, we guarantee at most one

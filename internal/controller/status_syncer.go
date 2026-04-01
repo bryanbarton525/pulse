@@ -49,6 +49,11 @@ type StatusSyncer struct {
 
 	// Interval is how often to poll /results and update statuses.
 	Interval time.Duration
+
+	// ResultsURL overrides the default in-cluster Service URL for the probe
+	// runner. This is primarily useful for local controller runs that need to
+	// talk to a port-forwarded or otherwise externally reachable runner.
+	ResultsURL string
 }
 
 // Start implements manager.Runnable. The manager calls this in a goroutine
@@ -174,8 +179,7 @@ func (s *StatusSyncer) statusChanged(canary *canaryv1alpha1.HttpCanary, res prob
 
 // fetchResults calls GET /results on the probe runner Service.
 func (s *StatusSyncer) fetchResults() ([]proberunner.ProbeResult, error) {
-	url := fmt.Sprintf("http://%s.%s.svc:%d/results",
-		ProbeRunnerName, s.Namespace, ProbeRunnerPort)
+	url := s.probeRunnerResultsURL()
 
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 	resp, err := httpClient.Get(url)
@@ -194,4 +198,13 @@ func (s *StatusSyncer) fetchResults() ([]proberunner.ProbeResult, error) {
 	}
 
 	return results, nil
+}
+
+func (s *StatusSyncer) probeRunnerResultsURL() string {
+	if s.ResultsURL != "" {
+		return s.ResultsURL
+	}
+
+	return fmt.Sprintf("http://%s.%s.svc:%d/results",
+		ProbeRunnerName, s.Namespace, ProbeRunnerPort)
 }

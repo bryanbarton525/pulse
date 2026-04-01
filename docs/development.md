@@ -43,7 +43,10 @@ pulse/
 make build
 
 # Build the probe runner binary
-go build -o bin/probe-runner cmd/proberunner/main.go
+make build-proberunner
+
+# Build the probe runner container image
+make docker-build-proberunner
 ```
 
 ### Code Generation
@@ -62,31 +65,45 @@ Always run both after changing type definitions or RBAC markers.
 # Install CRDs into the cluster
 make install
 
-# Run the controller on your machine (uses ~/.kube/config)
-make run
-
-# In another terminal, apply a sample canary
+# Apply a sample canary so the controller has work to reconcile
 kubectl apply -f config/samples/canary_v1alpha1_httpcanary.yaml
 
-# Watch it
-kubectl get httpcanaries -w
+# Export the generated probe config and run a local probe runner
+kubectl get configmap pulse-probe-config -n pulse-system -o jsonpath='{.data.probes\.yaml}' > /tmp/pulse-probes.yaml
+./bin/probe-runner --config=/tmp/pulse-probes.yaml --listen=127.0.0.1:9090
+
+# Run the controller on your machine with a local /results override
+POD_NAMESPACE=pulse-system \
+PULSE_PROBE_RUNNER_RESULTS_URL=http://127.0.0.1:9090/results \
+make run
+
+# Watch status updates
+kubectl get httpcanary sample-http-check -n default -o yaml
 ```
 
-When running locally, the controller creates the probe runner Deployment in-cluster but the StatusSyncer cannot reach the Service DNS. Use `kubectl port-forward` to bridge the gap, or test with `make deploy` instead.
+When running locally without `PULSE_PROBE_RUNNER_RESULTS_URL`, the controller still reconciles infrastructure into the cluster, but the StatusSyncer cannot reach the in-cluster Service DNS from your laptop by default.
 
 ### Deploy to Cluster
 
 ```bash
-# Build and push images
+# Build and push both images
 make docker-build IMG=your-registry/pulse-controller:latest
-docker build -t your-registry/pulse-probe-runner:latest -f Dockerfile.proberunner .
+make docker-build-proberunner PROBE_RUNNER_IMG=your-registry/pulse-probe-runner:latest
 
-# Deploy
-make deploy IMG=your-registry/pulse-controller:latest
+# Push them
+make docker-push IMG=your-registry/pulse-controller:latest
+make docker-push-proberunner PROBE_RUNNER_IMG=your-registry/pulse-probe-runner:latest
+
+# Deploy the controller and tell it which runner image to use
+make deploy \
+  IMG=your-registry/pulse-controller:latest \
+  PROBE_RUNNER_IMAGE=your-registry/pulse-probe-runner:latest
 
 # Verify
 kubectl -n pulse-system get pods
 ```
+
+`make deploy` sets `PULSE_PROBE_RUNNER_IMAGE` on the controller Deployment so the in-cluster reconciler creates runner pods with the correct image.
 
 ### Run Tests
 
