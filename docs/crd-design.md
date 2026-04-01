@@ -21,8 +21,34 @@ All Pulse CRDs belong to the API group `canary.iambarton.com`. The current versi
 | Field | Type | Required | Default | Validation | Description |
 |-------|------|----------|---------|------------|-------------|
 | `url` | string | Yes | — | minLength=1 | HTTP endpoint to check |
+| `method` | string | No | `GET` | `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` | HTTP method for simple single-request mode |
+| `headers` | map[string]string | No | — | — | Request headers for simple single-request mode |
+| `body` | string | No | — | — | Request body for simple single-request mode |
 | `interval` | int | No | 30 | minimum=5 | Check frequency in seconds |
 | `expectedStatus` | int | No | 200 | 100-599 | HTTP status code that means healthy |
+| `containsText` | string | No | — | — | Required response-body substring for simple single-request mode |
+| `journey` | []HttpCanaryStep | No | — | step `name` and `url` required | Ordered multi-step HTTP journey |
+
+### HttpCanaryStep Fields
+
+| Field | Type | Required | Default | Validation | Description |
+|-------|------|----------|---------|------------|-------------|
+| `name` | string | Yes | — | minLength=1 | Human-readable step label |
+| `url` | string | Yes | — | minLength=1 | Endpoint called for the step |
+| `method` | string | No | `GET` | `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` | HTTP method for the step |
+| `headers` | map[string]string | No | — | — | Request headers for the step |
+| `body` | string | No | — | — | Request body for the step |
+| `expectedStatus` | int | No | 200 | 100-599 | HTTP status code that means success for the step |
+| `containsText` | string | No | — | — | Required response-body substring for the step |
+
+### Journey Execution Rules
+
+- If `journey` is empty, Pulse executes one request using the top-level `url`, `method`, `headers`, `body`, `expectedStatus`, and `containsText` fields.
+- If `journey` is present, Pulse executes the steps in order and does not execute the top-level request fields.
+- Journey steps share cookies within a single check cycle, but not across intervals.
+- The top-level `url` remains required and is still the URL shown in `kubectl get httpcanaries`, so it should represent the canary's primary or final target.
+
+For step-by-step authoring guidance and examples, see [HTTP Journey Guide](http-journey-canary.md).
 
 ### Status Fields
 

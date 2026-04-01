@@ -1,0 +1,23 @@
+# Example HttpCanary representing a scripted login journey.
+# This is an HTTP synthetic, not a browser-driven flow.
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata:
+  name: sample-ui-login-page
+  namespace: default
+spec:
+  url: "https://httpbin.org/cookies"
+  interval: 30
+  expectedStatus: 200
+  containsText: "pulse-demo"
+  journey:
+    - name: establish-session
+      url: "https://httpbin.org/cookies/set/session/pulse-demo"
+      method: GET
+      expectedStatus: 200
+      containsText: "pulse-demo"
+    - name: verify-dashboard-session
+      url: "https://httpbin.org/cookies"
+      method: GET
+      expectedStatus: 200
+      containsText: "pulse-demo"

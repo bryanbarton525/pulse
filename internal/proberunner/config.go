@@ -20,10 +20,26 @@ type ProbeConfig struct {
 // Name uses the format "namespace/name" so the controller can map results
 // back to specific CRs when it queries the /results endpoint.
 type Probe struct {
-	Name           string `yaml:"name"`
-	URL            string `yaml:"url"`
-	Interval       int    `yaml:"interval"`
-	ExpectedStatus int    `yaml:"expectedStatus"`
+	Name           string            `yaml:"name"`
+	URL            string            `yaml:"url"`
+	Method         string            `yaml:"method,omitempty"`
+	Headers        map[string]string `yaml:"headers,omitempty"`
+	Body           string            `yaml:"body,omitempty"`
+	Interval       int               `yaml:"interval"`
+	ExpectedStatus int               `yaml:"expectedStatus"`
+	ContainsText   string            `yaml:"containsText,omitempty"`
+	Journey        []ProbeStep       `yaml:"journey,omitempty"`
+}
+
+// ProbeStep represents one HTTP request in a scripted synthetic journey.
+type ProbeStep struct {
+	Name           string            `yaml:"name"`
+	URL            string            `yaml:"url"`
+	Method         string            `yaml:"method,omitempty"`
+	Headers        map[string]string `yaml:"headers,omitempty"`
+	Body           string            `yaml:"body,omitempty"`
+	ExpectedStatus int               `yaml:"expectedStatus"`
+	ContainsText   string            `yaml:"containsText,omitempty"`
 }
 
 // LoadConfigFromFile reads a YAML config file from disk (the mounted ConfigMap)

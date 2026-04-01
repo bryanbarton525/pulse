@@ -1,0 +1,10 @@
+# Example HttpCanary representing an API readiness endpoint.
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata:
+  name: sample-api-readiness
+  namespace: default
+spec:
+  url: "https://httpbin.org/status/204"
+  interval: 30
+  expectedStatus: 204

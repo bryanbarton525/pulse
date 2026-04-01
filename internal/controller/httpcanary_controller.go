@@ -60,6 +60,10 @@ type HttpCanaryReconciler struct {
 
 	// ProbeRunnerImage is the container image for the probe runner Deployment.
 	ProbeRunnerImage string
+
+	// ProbeRunnerImagePullSecrets are attached to the probe runner pod template
+	// so the cluster can pull private images.
+	ProbeRunnerImagePullSecrets []corev1.LocalObjectReference
 }
 
 // RBAC markers — controller-gen reads these to generate config/rbac/role.yaml.
@@ -158,11 +162,29 @@ func buildProbeConfig(canaries []canaryv1alpha1.HttpCanary) proberunner.ProbeCon
 	}
 
 	for _, c := range canaries {
+		journey := make([]proberunner.ProbeStep, 0, len(c.Spec.Journey))
+		for _, step := range c.Spec.Journey {
+			journey = append(journey, proberunner.ProbeStep{
+				Name:           step.Name,
+				URL:            step.URL,
+				Method:         step.Method,
+				Headers:        step.Headers,
+				Body:           step.Body,
+				ExpectedStatus: step.ExpectedStatus,
+				ContainsText:   step.ContainsText,
+			})
+		}
+
 		config.Probes = append(config.Probes, proberunner.Probe{
 			Name:           fmt.Sprintf("%s/%s", c.Namespace, c.Name),
 			URL:            c.Spec.URL,
+			Method:         c.Spec.Method,
+			Headers:        c.Spec.Headers,
+			Body:           c.Spec.Body,
 			Interval:       c.Spec.Interval,
 			ExpectedStatus: c.Spec.ExpectedStatus,
+			ContainsText:   c.Spec.ContainsText,
+			Journey:        journey,
 		})
 	}
 
@@ -197,6 +219,7 @@ func (r *HttpCanaryReconciler) ensureDeployment(ctx context.Context) error {
 				},
 			},
 			Spec: corev1.PodSpec{
+				ImagePullSecrets: r.ProbeRunnerImagePullSecrets,
 				Containers: []corev1.Container{
 					{
 						Name:  "probe-runner",

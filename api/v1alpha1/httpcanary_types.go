@@ -4,6 +4,39 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// HttpCanaryStep defines one HTTP request in a scripted journey.
+type HttpCanaryStep struct {
+	// Name is a human-readable step label.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// URL is the HTTP endpoint to call for this step.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	URL string `json:"url"`
+
+	// Method is the HTTP method used for this step.
+	// +kubebuilder:default=GET
+	// +kubebuilder:validation:Enum=GET;POST;PUT;PATCH;DELETE;HEAD
+	Method string `json:"method,omitempty"`
+
+	// Headers are added to the request.
+	Headers map[string]string `json:"headers,omitempty"`
+
+	// Body is sent as the request body for methods that support it.
+	Body string `json:"body,omitempty"`
+
+	// ExpectedStatus is the HTTP status code that indicates success.
+	// +kubebuilder:validation:Minimum=100
+	// +kubebuilder:validation:Maximum=599
+	// +kubebuilder:default=200
+	ExpectedStatus int `json:"expectedStatus,omitempty"`
+
+	// ContainsText requires the response body to contain this substring.
+	ContainsText string `json:"containsText,omitempty"`
+}
+
 // HttpCanarySpec defines the desired state of HttpCanary.
 // This is what the user fills in when they write their YAML.
 type HttpCanarySpec struct {
@@ -11,6 +44,17 @@ type HttpCanarySpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	URL string `json:"url"`
+
+	// Method is the HTTP method used for a simple one-request check.
+	// +kubebuilder:default=GET
+	// +kubebuilder:validation:Enum=GET;POST;PUT;PATCH;DELETE;HEAD
+	Method string `json:"method,omitempty"`
+
+	// Headers are added to the request.
+	Headers map[string]string `json:"headers,omitempty"`
+
+	// Body is sent as the request body for methods that support it.
+	Body string `json:"body,omitempty"`
 
 	// Interval is how often (in seconds) to run the check.
 	// +kubebuilder:validation:Minimum=5
@@ -22,6 +66,12 @@ type HttpCanarySpec struct {
 	// +kubebuilder:validation:Maximum=599
 	// +kubebuilder:default=200
 	ExpectedStatus int `json:"expectedStatus,omitempty"`
+
+	// ContainsText requires the response body to contain this substring.
+	ContainsText string `json:"containsText,omitempty"`
+
+	// Journey defines a scripted sequence of HTTP requests.
+	Journey []HttpCanaryStep `json:"journey,omitempty"`
 }
 
 // HttpCanaryStatus defines the observed state of HttpCanary.

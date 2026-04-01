@@ -1,9 +1,13 @@
 package proberunner
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/cookiejar"
+	"strings"
 	"sync"
 	"time"
 
@@ -187,51 +191,191 @@ func (r *Runner) executeCheck(probe Probe) {
 	logger := r.logger.WithValues("probe", probe.Name)
 
 	start := time.Now()
-	httpClient := &http.Client{Timeout: 10 * time.Second}
+	httpClient, err := newHTTPClient()
+	if err != nil {
+		r.recordResult(probe.Name, &ProbeResult{
+			Name:           probe.Name,
+			Healthy:        false,
+			StatusCode:     0,
+			LastCheckTime:  time.Now(),
+			Message:        fmt.Sprintf("Failed to create HTTP client: %v", err),
+			URL:            probe.URL,
+			ExpectedStatus: probe.ExpectedStatus,
+		})
+		r.checkDuration.WithLabelValues(probe.Name).Observe(time.Since(start).Seconds())
+		r.checkTotal.WithLabelValues(probe.Name, "failure").Inc()
+		r.checkHealthy.WithLabelValues(probe.Name).Set(0)
+		logger.Info("Check failed", "error", err, "duration", time.Since(start))
+		return
+	}
 
-	resp, err := httpClient.Get(probe.URL)
+	result := r.executeProbe(httpClient, probe)
 	duration := time.Since(start)
 
 	// Record the duration metric regardless of success/failure.
 	r.checkDuration.WithLabelValues(probe.Name).Observe(duration.Seconds())
-
-	result := &ProbeResult{
-		Name:           probe.Name,
-		URL:            probe.URL,
-		ExpectedStatus: probe.ExpectedStatus,
-		LastCheckTime:  time.Now(),
-	}
-
-	if err != nil {
-		result.Healthy = false
-		result.StatusCode = 0
-		result.Message = fmt.Sprintf("HTTP request failed: %v", err)
+	if result.Healthy {
+		r.checkTotal.WithLabelValues(probe.Name, "success").Inc()
+		r.checkHealthy.WithLabelValues(probe.Name).Set(1)
+		logger.Info("Check passed", "status", result.StatusCode, "duration", duration)
+	} else {
 		r.checkTotal.WithLabelValues(probe.Name, "failure").Inc()
 		r.checkHealthy.WithLabelValues(probe.Name).Set(0)
-		logger.Info("Check failed", "error", err, "duration", duration)
-	} else {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			logger.Info("Failed to close response body", "error", closeErr)
-		}
-		result.StatusCode = resp.StatusCode
+		logger.Info("Check failed", "status", result.StatusCode, "message", result.Message, "duration", duration)
+	}
 
-		if resp.StatusCode == probe.ExpectedStatus {
-			result.Healthy = true
-			result.Message = fmt.Sprintf("Got expected status %d", resp.StatusCode)
-			r.checkTotal.WithLabelValues(probe.Name, "success").Inc()
-			r.checkHealthy.WithLabelValues(probe.Name).Set(1)
-			logger.Info("Check passed", "status", resp.StatusCode, "duration", duration)
-		} else {
-			result.Healthy = false
-			result.Message = fmt.Sprintf("Expected %d but got %d", probe.ExpectedStatus, resp.StatusCode)
-			r.checkTotal.WithLabelValues(probe.Name, "failure").Inc()
-			r.checkHealthy.WithLabelValues(probe.Name).Set(0)
-			logger.Info("Check failed", "expected", probe.ExpectedStatus, "got", resp.StatusCode, "duration", duration)
+	r.recordResult(probe.Name, result)
+}
+
+func (r *Runner) executeProbe(httpClient *http.Client, probe Probe) *ProbeResult {
+	if len(probe.Journey) > 0 {
+		return r.executeJourney(httpClient, probe)
+	}
+
+	return executeRequest(probe.Name, httpClient, probe.URL, probe.Method, probe.Headers, probe.Body,
+		probe.ExpectedStatus, probe.ContainsText)
+}
+
+func (r *Runner) executeJourney(httpClient *http.Client, probe Probe) *ProbeResult {
+	lastStatus := 0
+	for index, step := range probe.Journey {
+		result := executeRequest(probe.Name, httpClient, step.URL, step.Method, step.Headers, step.Body,
+			step.ExpectedStatus, step.ContainsText)
+		lastStatus = result.StatusCode
+		if !result.Healthy {
+			result.URL = probe.URL
+			result.ExpectedStatus = step.ExpectedStatus
+			result.Message = fmt.Sprintf("Step %d (%s) failed: %s", index+1, step.Name, result.Message)
+			return result
 		}
 	}
 
-	// Store the result — this is what /results serves.
+	return &ProbeResult{
+		Name:           probe.Name,
+		Healthy:        true,
+		StatusCode:     lastStatus,
+		LastCheckTime:  time.Now(),
+		Message:        fmt.Sprintf("Synthetic journey succeeded (%d steps)", len(probe.Journey)),
+		URL:            probe.URL,
+		ExpectedStatus: probe.ExpectedStatus,
+	}
+}
+
+func executeRequest(
+	probeName string,
+	httpClient *http.Client,
+	url string,
+	method string,
+	headers map[string]string,
+	body string,
+	expectedStatus int,
+	containsText string,
+) *ProbeResult {
+	request, err := http.NewRequest(normalizeMethod(method), url, bytes.NewBufferString(body))
+	if err != nil {
+		return &ProbeResult{
+			Name:           probeName,
+			Healthy:        false,
+			StatusCode:     0,
+			LastCheckTime:  time.Now(),
+			Message:        fmt.Sprintf("Failed to build request: %v", err),
+			URL:            url,
+			ExpectedStatus: expectedStatus,
+		}
+	}
+
+	for key, value := range headers {
+		request.Header.Set(key, value)
+	}
+
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return &ProbeResult{
+			Name:           probeName,
+			Healthy:        false,
+			StatusCode:     0,
+			LastCheckTime:  time.Now(),
+			Message:        fmt.Sprintf("HTTP request failed: %v", err),
+			URL:            url,
+			ExpectedStatus: expectedStatus,
+		}
+	}
+	defer func() {
+		_ = response.Body.Close()
+	}()
+
+	responseBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		return &ProbeResult{
+			Name:           probeName,
+			Healthy:        false,
+			StatusCode:     response.StatusCode,
+			LastCheckTime:  time.Now(),
+			Message:        fmt.Sprintf("Failed to read response body: %v", err),
+			URL:            url,
+			ExpectedStatus: expectedStatus,
+		}
+	}
+
+	if response.StatusCode != expectedStatus {
+		return &ProbeResult{
+			Name:           probeName,
+			Healthy:        false,
+			StatusCode:     response.StatusCode,
+			LastCheckTime:  time.Now(),
+			Message:        fmt.Sprintf("Expected %d but got %d", expectedStatus, response.StatusCode),
+			URL:            url,
+			ExpectedStatus: expectedStatus,
+		}
+	}
+
+	if containsText != "" && !strings.Contains(string(responseBody), containsText) {
+		return &ProbeResult{
+			Name:           probeName,
+			Healthy:        false,
+			StatusCode:     response.StatusCode,
+			LastCheckTime:  time.Now(),
+			Message:        fmt.Sprintf("Response body did not contain %q", containsText),
+			URL:            url,
+			ExpectedStatus: expectedStatus,
+		}
+	}
+
+	message := fmt.Sprintf("Got expected status %d", response.StatusCode)
+	if containsText != "" {
+		message = fmt.Sprintf("Got expected status %d and matched response text", response.StatusCode)
+	}
+
+	return &ProbeResult{
+		Name:           probeName,
+		Healthy:        true,
+		StatusCode:     response.StatusCode,
+		LastCheckTime:  time.Now(),
+		Message:        message,
+		URL:            url,
+		ExpectedStatus: expectedStatus,
+	}
+}
+
+func (r *Runner) recordResult(name string, result *ProbeResult) {
 	r.mu.Lock()
-	r.results[probe.Name] = result
+	r.results[name] = result
 	r.mu.Unlock()
+}
+
+func newHTTPClient() (*http.Client, error) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return &http.Client{Timeout: 10 * time.Second, Jar: jar}, nil
+}
+
+func normalizeMethod(method string) string {
+	if method == "" {
+		return http.MethodGet
+	}
+
+	return strings.ToUpper(method)
 }

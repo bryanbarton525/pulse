@@ -1,0 +1,114 @@
+name: Test Chart
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-chart:
+    name: Run on Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install the latest version of kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-$(go env GOARCH)
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Verify kind installation
+        run: kind version
+
+      - name: Create kind cluster
+        run: kind create cluster
+
+      - name: Prepare pulse
+        run: |
+          go mod tidy
+          make docker-build IMG=pulse-controller:chart-test
+          make docker-build-proberunner PROBE_RUNNER_IMG=pulse-probe-runner:chart-test
+          kind load docker-image pulse-controller:chart-test
+          kind load docker-image pulse-probe-runner:chart-test
+
+      - name: Install Helm
+        run: make install-helm
+
+      - name: Lint Helm Chart
+        run: |
+          helm lint ./dist/chart
+
+# TODO: Uncomment if cert-manager is enabled
+#      - name: Install cert-manager via Helm (wait for readiness)
+#        run: |
+#          helm repo add jetstack https://charts.jetstack.io
+#          helm repo update
+#          helm install cert-manager jetstack/cert-manager \
+#            --namespace cert-manager \
+#            --create-namespace \
+#            --set crds.enabled=true \
+#            --wait \
+#            --timeout 300s
+
+# TODO: Uncomment if Prometheus is enabled
+#      - name: Install Prometheus Operator CRDs
+#        run: |
+#          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#          helm repo update
+#          helm install prometheus-crds prometheus-community/prometheus-operator-crds
+
+      - name: Deploy manager via Helm
+        run: |
+          make helm-deploy \
+            IMG=pulse-controller:chart-test \
+            PROBE_RUNNER_IMAGE=pulse-probe-runner:chart-test
+
+      - name: Check Helm release status
+        run: |
+          make helm-status
+
+      - name: Wait for operator pods
+        run: |
+          kubectl rollout status deployment/pulse-controller-manager -n pulse-system --timeout=180s
+          kubectl rollout status deployment/pulse-probe-runner -n pulse-system --timeout=180s
+
+      - name: Apply sample canaries
+        run: |
+          kubectl apply -f config/samples/canary_v1alpha1_httpcanary.yaml
+          kubectl apply -f config/samples/canary_v1alpha1_httpcanary_204.yaml
+          kubectl apply -f config/samples/canary_v1alpha1_httpcanary_unhealthy.yaml
+          kubectl apply -f config/samples/canary_v1alpha1_httpcanary_ui_login.yaml
+          kubectl apply -f config/samples/canary_v1alpha1_httpcanary_api_readiness.yaml
+          kubectl apply -f config/samples/canary_v1alpha1_httpcanary_checkout_entry.yaml
+
+      - name: Wait for sample canary statuses
+        run: |
+          deadline=$((SECONDS + 180))
+          while [ $SECONDS -lt $deadline ]; do
+            healthy_200="$(kubectl get httpcanary sample-http-check -n default -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+            healthy_204="$(kubectl get httpcanary sample-http-check-204 -n default -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+            unhealthy="$(kubectl get httpcanary sample-http-check-unhealthy -n default -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+            login="$(kubectl get httpcanary sample-ui-login-page -n default -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+            readiness="$(kubectl get httpcanary sample-api-readiness -n default -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+            checkout="$(kubectl get httpcanary sample-checkout-entry -n default -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+            if [ "$healthy_200" = "Healthy" ] && \
+               [ "$healthy_204" = "Healthy" ] && \
+               [ "$unhealthy" = "Unhealthy" ] && \
+               [ "$login" = "Healthy" ] && \
+               [ "$readiness" = "Healthy" ] && \
+               [ "$checkout" = "Healthy" ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          kubectl get httpcanaries -A
+          exit 1
+
+      - name: Show final canary states
+        run: kubectl get httpcanaries -A

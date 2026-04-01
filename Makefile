@@ -2,6 +2,7 @@
 IMG ?= controller:latest
 PROBE_RUNNER_IMG ?= pulse-probe-runner:latest
 PROBE_RUNNER_IMAGE ?= $(PROBE_RUNNER_IMG)
+PROBE_RUNNER_IMAGE_PULL_SECRETS ?=
 PROBE_RUNNER_RESULTS_URL ?=
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
@@ -118,6 +119,7 @@ build-proberunner: manifests generate fmt vet ## Build probe runner binary.
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
 	PULSE_PROBE_RUNNER_IMAGE="$${PULSE_PROBE_RUNNER_IMAGE:-$(PROBE_RUNNER_IMAGE)}" \
+	PULSE_PROBE_RUNNER_IMAGE_PULL_SECRETS="$${PULSE_PROBE_RUNNER_IMAGE_PULL_SECRETS:-$(PROBE_RUNNER_IMAGE_PULL_SECRETS)}" \
 	PULSE_PROBE_RUNNER_RESULTS_URL="$${PULSE_PROBE_RUNNER_RESULTS_URL:-$(PROBE_RUNNER_RESULTS_URL)}" \
 	go run ./cmd/main.go
 
@@ -198,6 +200,11 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -
 	"$(KUBECTL)" -n pulse-system set env deployment/pulse-controller-manager \
 		PULSE_PROBE_RUNNER_IMAGE="$${PULSE_PROBE_RUNNER_IMAGE:-$(PROBE_RUNNER_IMAGE)}"
+	@pull_secrets="$${PULSE_PROBE_RUNNER_IMAGE_PULL_SECRETS:-$(PROBE_RUNNER_IMAGE_PULL_SECRETS)}"; \
+	if [ -n "$$pull_secrets" ]; then \
+		"$(KUBECTL)" -n pulse-system set env deployment/pulse-controller-manager \
+			PULSE_PROBE_RUNNER_IMAGE_PULL_SECRETS="$$pull_secrets"; \
+	fi
 	@results_url="$${PULSE_PROBE_RUNNER_RESULTS_URL:-$(PROBE_RUNNER_RESULTS_URL)}"; \
 	if [ -n "$$results_url" ]; then \
 		"$(KUBECTL)" -n pulse-system set env deployment/pulse-controller-manager \
@@ -290,3 +297,65 @@ endef
 define gomodver
 $(shell go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' $(1) 2>/dev/null)
 endef
+
+##@ Helm Deployment
+
+## Helm binary to use for deploying the chart
+HELM ?= helm
+## Namespace to deploy the Helm release
+HELM_NAMESPACE ?= pulse-system
+## Name of the Helm release
+HELM_RELEASE ?= pulse
+## Path to the Helm chart directory
+HELM_CHART_DIR ?= dist/chart
+## Additional arguments to pass to helm commands
+HELM_EXTRA_ARGS ?=
+## Image pull secret name for private registries
+HELM_IMAGE_PULL_SECRET ?=
+
+.PHONY: install-helm
+install-helm: ## Install the latest version of Helm.
+	@command -v $(HELM) >/dev/null 2>&1 || { \
+		echo "Installing Helm..." && \
+		curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4 | bash; \
+	}
+
+.PHONY: helm-deploy
+helm-deploy: install-helm ## Deploy manager to the K8s cluster via Helm. Specify an image with IMG.
+	@probe_runner_image="$${PROBE_RUNNER_IMAGE:-$(PROBE_RUNNER_IMAGE)}"; \
+	controller_repo="$${IMG%:*}"; \
+	controller_tag="$${IMG##*:}"; \
+	probe_repo="$${probe_runner_image%:*}"; \
+	probe_tag="$${probe_runner_image##*:}"; \
+	set -- \
+		--namespace $(HELM_NAMESPACE) \
+		--create-namespace \
+		--set manager.image.repository="$$controller_repo" \
+		--set manager.image.tag="$$controller_tag" \
+		--set manager.probeRunnerImage.repository="$$probe_repo" \
+		--set manager.probeRunnerImage.tag="$$probe_tag" \
+		--wait \
+		--timeout 5m; \
+		if [ -n "$(HELM_IMAGE_PULL_SECRET)" ]; then \
+			set -- "$$@" --set manager.imagePullSecrets[0].name=$(HELM_IMAGE_PULL_SECRET); \
+		fi; \
+		if [ -n "$${PULSE_PROBE_RUNNER_RESULTS_URL:-}" ]; then \
+			set -- "$$@" --set manager.probeRunnerResultsURL="$${PULSE_PROBE_RUNNER_RESULTS_URL}"; \
+		fi; \
+		$(HELM) upgrade --install $(HELM_RELEASE) $(HELM_CHART_DIR) "$$@" $(HELM_EXTRA_ARGS)
+
+.PHONY: helm-uninstall
+helm-uninstall: ## Uninstall the Helm release from the K8s cluster.
+	$(HELM) uninstall $(HELM_RELEASE) --namespace $(HELM_NAMESPACE)
+
+.PHONY: helm-status
+helm-status: ## Show Helm release status.
+	$(HELM) status $(HELM_RELEASE) --namespace $(HELM_NAMESPACE)
+
+.PHONY: helm-history
+helm-history: ## Show Helm release history.
+	$(HELM) history $(HELM_RELEASE) --namespace $(HELM_NAMESPACE)
+
+.PHONY: helm-rollback
+helm-rollback: ## Rollback to previous Helm release.
+	$(HELM) rollback $(HELM_RELEASE) --namespace $(HELM_NAMESPACE)

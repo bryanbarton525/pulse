@@ -20,12 +20,14 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strings"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -65,6 +67,7 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var probeRunnerImage string
+	var probeRunnerImagePullSecrets string
 	var probeRunnerResultsURL string
 	var secureMetrics bool
 	var enableHTTP2 bool
@@ -87,6 +90,9 @@ func main() {
 	defaultProbeRunnerImage := envOrDefault("PULSE_PROBE_RUNNER_IMAGE", "pulse-probe-runner:latest")
 	flag.StringVar(&probeRunnerImage, "probe-runner-image", defaultProbeRunnerImage,
 		"Container image for the probe runner Deployment.")
+	flag.StringVar(&probeRunnerImagePullSecrets, "probe-runner-image-pull-secrets",
+		os.Getenv("PULSE_PROBE_RUNNER_IMAGE_PULL_SECRETS"),
+		"Comma-separated image pull secret names for the probe runner Deployment.")
 	flag.StringVar(&probeRunnerResultsURL, "probe-runner-results-url", os.Getenv("PULSE_PROBE_RUNNER_RESULTS_URL"),
 		"Optional override for the probe runner /results URL. Useful when the controller runs outside the cluster.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
@@ -206,10 +212,11 @@ func main() {
 	//   - Namespace: where to create the ConfigMap, Deployment, and Service
 	//   - ProbeRunnerImage: what image the Deployment should run
 	if err := (&controller.HttpCanaryReconciler{
-		Client:           mgr.GetClient(),
-		Scheme:           mgr.GetScheme(),
-		Namespace:        namespace,
-		ProbeRunnerImage: probeRunnerImage,
+		Client:                      mgr.GetClient(),
+		Scheme:                      mgr.GetScheme(),
+		Namespace:                   namespace,
+		ProbeRunnerImage:            probeRunnerImage,
+		ProbeRunnerImagePullSecrets: parseLocalObjectReferences(probeRunnerImagePullSecrets),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "HttpCanary")
 		os.Exit(1)
@@ -253,4 +260,23 @@ func envOrDefault(key, fallback string) string {
 	}
 
 	return fallback
+}
+
+func parseLocalObjectReferences(value string) []corev1.LocalObjectReference {
+	if value == "" {
+		return nil
+	}
+
+	parts := strings.Split(value, ",")
+	references := make([]corev1.LocalObjectReference, 0, len(parts))
+	for _, part := range parts {
+		name := strings.TrimSpace(part)
+		if name == "" {
+			continue
+		}
+
+		references = append(references, corev1.LocalObjectReference{Name: name})
+	}
+
+	return references
 }

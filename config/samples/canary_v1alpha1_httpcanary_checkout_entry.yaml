@@ -1,0 +1,33 @@
+# Example HttpCanary representing a scripted checkout entry flow.
+# This remains HTTP-based and does not drive a real browser.
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata:
+  name: sample-checkout-entry
+  namespace: default
+spec:
+  url: "https://httpbin.org/anything/checkout"
+  method: POST
+  headers:
+    Content-Type: application/json
+  body: '{"cart":"demo-plan","stage":"checkout"}'
+  interval: 30
+  expectedStatus: 200
+  containsText: "demo-plan"
+  journey:
+    - name: build-cart
+      url: "https://httpbin.org/anything/cart"
+      method: POST
+      headers:
+        Content-Type: application/json
+      body: '{"sku":"demo-plan","qty":1}'
+      expectedStatus: 200
+      containsText: "demo-plan"
+    - name: open-checkout
+      url: "https://httpbin.org/anything/checkout"
+      method: POST
+      headers:
+        Content-Type: application/json
+      body: '{"cart":"demo-plan","stage":"checkout"}'
+      expectedStatus: 200
+      containsText: "/anything/checkout"

@@ -2,6 +2,8 @@
 
 Pulse is a Kubernetes operator that lets developers define canary health checks as custom resources. Apply a YAML file, and Pulse continuously monitors your endpoints and reports status back on the CR.
 
+Pulse supports both simple single-request checks and scripted multi-step HTTP journeys for login, session, and checkout-style flows.
+
 The repository already includes a fuller design set in `docs/`. Start with the architecture summary, then drill into reconciliation, scaling, operations, and validation details.
 
 ## Quick Start
@@ -33,6 +35,32 @@ spec:
   expectedStatus: 200
 ```
 
+```yaml
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata:
+  name: check-login-journey
+spec:
+  url: "https://example.com/dashboard"
+  interval: 30
+  expectedStatus: 200
+  containsText: "dashboard"
+  journey:
+    - name: open-login
+      url: "https://example.com/login"
+      method: GET
+      expectedStatus: 200
+      containsText: "Sign in"
+    - name: submit-login
+      url: "https://example.com/session"
+      method: POST
+      headers:
+        Content-Type: application/json
+      body: '{"username":"demo","password":"secret"}'
+      expectedStatus: 200
+      containsText: "dashboard"
+```
+
 ```
 $ kubectl get httpcanaries
 NAME            URL                                PHASE     AGE
@@ -49,6 +77,8 @@ Pulse uses a split architecture for scalability:
 
 This separation keeps the operator lightweight (it never makes HTTP calls itself) and allows the probe runner to scale independently.
 
+For richer synthetics, the probe runner reuses one HTTP client and cookie jar per journey so multi-step session flows work without adding browser automation to the operator.
+
 ## Supported Canary Types
 
 | Kind | Description | Status |
@@ -63,6 +93,8 @@ This separation keeps the operator lightweight (it never makes HTTP calls itself
 - [Architecture](docs/architecture.md) -- component overview and data flow
 - [Reconciliation Design](docs/reconciliation-design.md) -- why reconcile is single-key and infrastructure-focused
 - [CRD Design](docs/crd-design.md) -- API schema, versioning, and how to add new CRD types
+- [HTTP Journey Guide](docs/http-journey-canary.md) -- exact runtime semantics and authoring patterns for multi-step HTTP canaries
+- [Helm Guide](docs/helm.md) -- chart install flow, private GHCR pulls, and sample probe usage
 - [Scaling Design](docs/scaling.md) -- how the controller handles thousands of canaries
 - [Operations Guide](docs/operations.md) -- cluster runtime model, inspection, and troubleshooting
 - [Testing and Validation](docs/testing-and-validation.md) -- automated checks and cluster smoke-test flow
@@ -77,9 +109,30 @@ make manifests                # Regenerate CRD + RBAC YAML
 make generate                 # Regenerate DeepCopy methods
 make docker-build IMG=...     # Build controller container image
 make docker-build-proberunner # Build probe runner container image
+make helm-deploy IMG=... PROBE_RUNNER_IMAGE=... # Install the operator with Helm
 make test                     # Run unit tests
 make test-e2e                 # Run e2e tests (requires Kind)
 ```
+
+## Helm Deploy
+
+```bash
+make helm-deploy \
+  IMG=ghcr.io/bryanbarton525/pulse-controller:latest \
+  PROBE_RUNNER_IMAGE=ghcr.io/bryanbarton525/pulse-probe-runner:latest
+
+kubectl apply -f config/samples/canary_v1alpha1_httpcanary.yaml
+kubectl apply -f config/samples/canary_v1alpha1_httpcanary_204.yaml
+kubectl apply -f config/samples/canary_v1alpha1_httpcanary_unhealthy.yaml
+kubectl apply -f config/samples/canary_v1alpha1_httpcanary_ui_login.yaml
+kubectl apply -f config/samples/canary_v1alpha1_httpcanary_api_readiness.yaml
+kubectl apply -f config/samples/canary_v1alpha1_httpcanary_checkout_entry.yaml
+kubectl get httpcanaries -A
+```
+
+If your GHCR packages are private, create a pull secret and pass `HELM_IMAGE_PULL_SECRET=ghcr-pull-secret`. See `docs/helm.md` for the full flow.
+
+The UI/login and checkout examples now exercise scripted HTTP journeys. They remain HTTP-only and do not execute browser-based automation.
 
 ## Cluster Validation
 
