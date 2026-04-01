@@ -161,6 +161,15 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx rm pulse-builder
 	rm Dockerfile.cross
 
+.PHONY: docker-buildx-proberunner
+docker-buildx-proberunner: ## Build and push probe runner image for cross-platform support
+	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile.proberunner > Dockerfile.proberunner.cross
+	- $(CONTAINER_TOOL) buildx create --name pulse-builder
+	$(CONTAINER_TOOL) buildx use pulse-builder
+	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${PROBE_RUNNER_IMG} -f Dockerfile.proberunner.cross .
+	- $(CONTAINER_TOOL) buildx rm pulse-builder
+	rm Dockerfile.proberunner.cross
+
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
