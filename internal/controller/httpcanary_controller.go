@@ -28,6 +28,8 @@ const (
 	ProbeRunnerName = "pulse-probe-runner"
 	ProbeConfigName = "pulse-probe-config"
 	ProbeConfigFile = "probes.yaml"
+	ProbeAuthName   = "pulse-probe-auth"
+	ProbeAuthFile   = "auth.yaml"
 	ProbeRunnerPort = 9090
 )
 
@@ -72,6 +74,7 @@ type HttpCanaryReconciler struct {
 // +kubebuilder:rbac:groups=canary.iambarton.com,resources=httpcanaries/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=canary.iambarton.com,resources=httpcanaries/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch
 
@@ -102,10 +105,18 @@ func (r *HttpCanaryReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// STEP 2: Build the probe config from all CRs.
 	// ──────────────────────────────────────────────────────
 	config := buildProbeConfig(canaryList.Items)
+	authStore := proberunner.AuthStore{Values: map[string]string{}}
+	r.populateProbeAuth(ctx, canaryList.Items, &config, &authStore)
 
 	configYAML, err := yaml.Marshal(config)
 	if err != nil {
 		logger.Error(err, "Failed to marshal probe config")
+		return ctrl.Result{}, err
+	}
+
+	authYAML, err := yaml.Marshal(authStore)
+	if err != nil {
+		logger.Error(err, "Failed to marshal probe auth store")
 		return ctrl.Result{}, err
 	}
 
@@ -133,7 +144,15 @@ func (r *HttpCanaryReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	logger.Info("ConfigMap reconciled", "result", result)
 
 	// ──────────────────────────────────────────────────────
-	// STEP 4: Ensure the probe runner Deployment.
+	// STEP 4: Ensure Secret with probe auth material.
+	// ──────────────────────────────────────────────────────
+	if err := r.ensureAuthSecret(ctx, authYAML); err != nil {
+		logger.Error(err, "Failed to ensure auth Secret")
+		return ctrl.Result{}, err
+	}
+
+	// ──────────────────────────────────────────────────────
+	// STEP 5: Ensure the probe runner Deployment.
 	// ──────────────────────────────────────────────────────
 	if err := r.ensureDeployment(ctx); err != nil {
 		logger.Error(err, "Failed to ensure Deployment")
@@ -141,7 +160,7 @@ func (r *HttpCanaryReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	// ──────────────────────────────────────────────────────
-	// STEP 5: Ensure the probe runner Service.
+	// STEP 6: Ensure the probe runner Service.
 	// ──────────────────────────────────────────────────────
 	if err := r.ensureService(ctx); err != nil {
 		logger.Error(err, "Failed to ensure Service")
@@ -184,6 +203,7 @@ func buildProbeConfig(canaries []canaryv1alpha1.HttpCanary) proberunner.ProbeCon
 			Interval:       c.Spec.Interval,
 			ExpectedStatus: c.Spec.ExpectedStatus,
 			ContainsText:   c.Spec.ContainsText,
+			MCP:            buildProbeMCP(c.Spec.MCP),
 			Journey:        journey,
 			Outputs:        buildProbeOutputs(c.Spec.Outputs),
 		})
@@ -203,6 +223,172 @@ func buildProbeOutputs(outputs []canaryv1alpha1.HttpCanaryOutput) []proberunner.
 	}
 
 	return probeOutputs
+}
+
+func buildProbeMCP(mcp *canaryv1alpha1.HttpCanaryMCP) *proberunner.ProbeMCP {
+	if mcp == nil {
+		return nil
+	}
+
+	return &proberunner.ProbeMCP{
+		ProtocolVersion:        mcp.ProtocolVersion,
+		ClientName:             mcp.ClientName,
+		ClientVersion:          mcp.ClientVersion,
+		RequireToolsCapability: mcp.RequireToolsCapability,
+		MinToolCount:           mcp.MinToolCount,
+		RequiredTools:          append([]string(nil), mcp.RequiredTools...),
+	}
+}
+
+func (r *HttpCanaryReconciler) populateProbeAuth(
+	ctx context.Context,
+	canaries []canaryv1alpha1.HttpCanary,
+	config *proberunner.ProbeConfig,
+	authStore *proberunner.AuthStore,
+) {
+	if authStore.Values == nil {
+		authStore.Values = map[string]string{}
+	}
+
+	for index, canary := range canaries {
+		probeAuth, values, err := r.buildProbeAuth(ctx, canary)
+		if err != nil {
+			config.Probes[index].ConfigError = fmt.Sprintf("Invalid auth config: %v", err)
+			continue
+		}
+
+		config.Probes[index].Auth = probeAuth
+		for key, value := range values {
+			authStore.Values[key] = value
+		}
+	}
+}
+
+func (r *HttpCanaryReconciler) buildProbeAuth(
+	ctx context.Context,
+	canary canaryv1alpha1.HttpCanary,
+) (*proberunner.ProbeAuth, map[string]string, error) {
+	if canary.Spec.Auth == nil {
+		return nil, nil, nil
+	}
+
+	auth := canary.Spec.Auth
+	credentials := map[string]string{}
+
+	switch auth.Type {
+	case canaryv1alpha1.HttpCanaryAuthTypeBasic:
+		if auth.Basic == nil {
+			return nil, nil, fmt.Errorf("basic auth requires the basic block")
+		}
+
+		username, err := r.resolveSecretValue(ctx, canary.Namespace, auth.Basic.UsernameSecretRef)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolving basic username: %w", err)
+		}
+		password, err := r.resolveSecretValue(ctx, canary.Namespace, auth.Basic.PasswordSecretRef)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolving basic password: %w", err)
+		}
+
+		usernameID := probeCredentialID(canary.Namespace, canary.Name, "basic-username")
+		passwordID := probeCredentialID(canary.Namespace, canary.Name, "basic-password")
+		credentials[usernameID] = username
+		credentials[passwordID] = password
+
+		return &proberunner.ProbeAuth{
+			Type:                 auth.Type,
+			UsernameCredentialID: usernameID,
+			PasswordCredentialID: passwordID,
+		}, credentials, nil
+	case canaryv1alpha1.HttpCanaryAuthTypeBearer:
+		if auth.Bearer == nil {
+			return nil, nil, fmt.Errorf("bearer auth requires the bearer block")
+		}
+
+		token, err := r.resolveSecretValue(ctx, canary.Namespace, auth.Bearer.TokenSecretRef)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolving bearer token: %w", err)
+		}
+
+		tokenID := probeCredentialID(canary.Namespace, canary.Name, "bearer-token")
+		credentials[tokenID] = token
+
+		return &proberunner.ProbeAuth{Type: auth.Type, TokenCredentialID: tokenID}, credentials, nil
+	case canaryv1alpha1.HttpCanaryAuthTypeAPIKey:
+		if auth.APIKey == nil {
+			return nil, nil, fmt.Errorf("apiKey auth requires the apiKey block")
+		}
+		if auth.APIKey.HeaderName == "" {
+			return nil, nil, fmt.Errorf("apiKey auth requires headerName")
+		}
+
+		value, err := r.resolveSecretValue(ctx, canary.Namespace, auth.APIKey.ValueSecretRef)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolving apiKey value: %w", err)
+		}
+
+		valueID := probeCredentialID(canary.Namespace, canary.Name, "api-key")
+		credentials[valueID] = value
+
+		return &proberunner.ProbeAuth{Type: auth.Type, HeaderName: auth.APIKey.HeaderName, ValueCredentialID: valueID}, credentials, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported auth type %q", auth.Type)
+	}
+}
+
+func (r *HttpCanaryReconciler) resolveSecretValue(
+	ctx context.Context,
+	namespace string,
+	selector corev1.SecretKeySelector,
+) (string, error) {
+	if selector.Name == "" {
+		return "", fmt.Errorf("secret name is required")
+	}
+	if selector.Key == "" {
+		return "", fmt.Errorf("secret key is required")
+	}
+
+	var secret corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: selector.Name}, &secret); err != nil {
+		return "", err
+	}
+
+	value, found := secret.Data[selector.Key]
+	if !found {
+		return "", fmt.Errorf("secret %s/%s is missing key %q", namespace, selector.Name, selector.Key)
+	}
+
+	return string(value), nil
+}
+
+func probeCredentialID(namespace, name, suffix string) string {
+	return fmt.Sprintf("%s__%s__%s", namespace, name, suffix)
+}
+
+func (r *HttpCanaryReconciler) ensureAuthSecret(ctx context.Context, authYAML []byte) error {
+	logger := log.FromContext(ctx)
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ProbeAuthName,
+			Namespace: r.Namespace,
+		},
+	}
+
+	result, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		secret.Labels = managedLabels
+		secret.Type = corev1.SecretTypeOpaque
+		secret.Data = map[string][]byte{
+			ProbeAuthFile: authYAML,
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	logger.Info("Auth Secret reconciled", "result", result)
+	return nil
 }
 
 // ensureDeployment creates or updates the probe runner Deployment.
@@ -240,6 +426,7 @@ func (r *HttpCanaryReconciler) ensureDeployment(ctx context.Context) error {
 						Image: r.ProbeRunnerImage,
 						Args: []string{
 							fmt.Sprintf("--config=/etc/pulse/%s", ProbeConfigFile),
+							fmt.Sprintf("--auth-file=/etc/pulse-auth/%s", ProbeAuthFile),
 							fmt.Sprintf("--listen=:%d", ProbeRunnerPort),
 						},
 						Ports: []corev1.ContainerPort{
@@ -273,6 +460,11 @@ func (r *HttpCanaryReconciler) ensureDeployment(ctx context.Context) error {
 								MountPath: "/etc/pulse",
 								ReadOnly:  true,
 							},
+							{
+								Name:      "probe-auth",
+								MountPath: "/etc/pulse-auth",
+								ReadOnly:  true,
+							},
 						},
 					},
 				},
@@ -284,6 +476,14 @@ func (r *HttpCanaryReconciler) ensureDeployment(ctx context.Context) error {
 								LocalObjectReference: corev1.LocalObjectReference{
 									Name: ProbeConfigName,
 								},
+							},
+						},
+					},
+					{
+						Name: "probe-auth",
+						VolumeSource: corev1.VolumeSource{
+							Secret: &corev1.SecretVolumeSource{
+								SecretName: ProbeAuthName,
 							},
 						},
 					},
@@ -384,6 +584,13 @@ func (r *HttpCanaryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// Watches() + MapFunc replaces For(). Every HttpCanary event
 		// (create, update, delete) gets mapped to the same trigger key.
 		Watches(&canaryv1alpha1.HttpCanary{},
+			handler.EnqueueRequestsFromMapFunc(
+				func(_ context.Context, _ client.Object) []ctrl.Request {
+					return []ctrl.Request{triggerKey}
+				},
+			),
+		).
+		Watches(&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(
 				func(_ context.Context, _ client.Object) []ctrl.Request {
 					return []ctrl.Request{triggerKey}

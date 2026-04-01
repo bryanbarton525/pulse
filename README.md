@@ -6,7 +6,7 @@
 
 Pulse is a Kubernetes operator that lets developers define canary health checks as custom resources. Apply a YAML file, and Pulse continuously monitors your endpoints and reports status back on the CR.
 
-Pulse supports both simple single-request checks and scripted multi-step HTTP journeys for login, session, and checkout-style flows.
+Pulse supports simple single-request checks, scripted multi-step HTTP journeys for login, session, and checkout-style flows, and MCP tool-availability validation over HTTP.
 
 The repository already includes a fuller design set in `docs/`. Start with the architecture summary, then drill into reconciliation, scaling, operations, and validation details.
 
@@ -68,21 +68,37 @@ spec:
 ```
 
 ```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mcp-auth
+type: Opaque
+stringData:
+  token: replace-me
+---
 apiVersion: canary.iambarton.com/v1alpha1
 kind: HttpCanary
 metadata:
-  name: check-mcp-initialize
+  name: check-mcp-tools
 spec:
   url: "https://mcp.example.com/mcp"
   interval: 30
-  method: POST
-  expectedStatus: 200
-  containsText: '"protocolVersion"'
+  auth:
+    type: bearer
+    bearer:
+      tokenSecretRef:
+        name: mcp-auth
+        key: token
   headers:
-    Content-Type: application/json
     Accept: application/json, text/event-stream
-  body: |
-    {"jsonrpc":"2.0","id":"pulse-initialize","method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"pulse","version":"0.1.0"}}}
+  mcp:
+    protocolVersion: "2025-11-25"
+    clientName: pulse
+    clientVersion: 0.1.0
+    requireToolsCapability: true
+    minToolCount: 1
+    requiredTools:
+      - health.check
   outputs:
     - type: prometheus
     - type: stdout
@@ -99,7 +115,7 @@ check-my-api    https://api.example.com/health     Healthy   5m
 Pulse uses a split architecture for scalability:
 
 1. **Controller** watches HttpCanary CRs across all namespaces and manages a shared probe configuration (ConfigMap), a probe runner Deployment, and a Service
-2. **Probe Runner** reads the config, executes HTTP checks on each probe's interval, exposes `/results` for status sync, and can emit telemetry per canary to Prometheus, stdout, or both
+2. **Probe Runner** reads the generated config and auth material, executes HTTP checks on each probe's interval, exposes `/results` for status sync, and can emit telemetry per canary to Prometheus, stdout, or both
 3. **Status Syncer** polls the runner every 15 seconds and writes results back to each CR's `.status`
 
 This separation keeps the operator lightweight (it never makes HTTP calls itself) and allows the probe runner to scale independently.
@@ -115,6 +131,18 @@ For richer synthetics, the probe runner reuses one HTTP client and cookie jar pe
 - Omitting `outputs` defaults to `prometheus` for backward compatibility
 
 The internal `/results` endpoint remains in place for the controller's status sync loop and is not configured per canary.
+
+## MCP Canaries
+
+Pulse now supports first-class MCP validation for HTTP-based MCP servers.
+
+- Pulse performs a real MCP handshake: `initialize`, `notifications/initialized`, and `tools/list`
+- Health can require tool capability support, a minimum tool count, specific required tool names, or all three together
+- Auth is Secret-backed and currently supports `basic`, `bearer`, and `apiKey`
+- MCP support is HTTP-only in this release; stdio transport is not implemented
+- OAuth 2.1 token acquisition is not implemented yet, so secured endpoints should use pre-provisioned credentials in Kubernetes Secrets
+
+The controller keeps secret material out of the shared probe ConfigMap by resolving referenced Secret keys into a generated Secret mounted only into the probe runner.
 
 ## Supported Canary Types
 
@@ -170,7 +198,7 @@ kubectl get httpcanaries -A
 
 If your GHCR packages are private, create a pull secret and pass `HELM_IMAGE_PULL_SECRET=ghcr-pull-secret`. See `docs/helm.md` for the full flow.
 
-The UI/login and checkout examples exercise scripted HTTP journeys. The MCP sample shows an HTTP JSON-RPC initialize check against an MCP endpoint. These remain HTTP-only and do not execute browser-based automation.
+The UI/login and checkout examples exercise scripted HTTP journeys. The MCP sample performs a real initialize plus tools/list validation against an MCP HTTP endpoint and supports Secret-backed Basic, Bearer/JWT, and API key authentication. These remain HTTP-only and do not execute browser-based automation or OAuth login flows.
 
 ## Cluster Validation
 
@@ -187,7 +215,8 @@ For full status propagation from a locally running controller, start a local pro
 
 ```bash
 kubectl get configmap pulse-probe-config -n pulse-system -o jsonpath='{.data.probes\.yaml}' > /tmp/pulse-probes.yaml
-./bin/probe-runner --config=/tmp/pulse-probes.yaml --listen=127.0.0.1:9090
+kubectl get secret pulse-probe-auth -n pulse-system -o jsonpath='{.data.auth\.yaml}' | base64 --decode > /tmp/pulse-auth.yaml
+./bin/probe-runner --config=/tmp/pulse-probes.yaml --auth-file=/tmp/pulse-auth.yaml --listen=127.0.0.1:9090
 POD_NAMESPACE=pulse-system \
 PULSE_PROBE_RUNNER_RESULTS_URL=http://127.0.0.1:9090/results \
 make run

@@ -53,6 +53,146 @@ spec:
               HttpCanarySpec defines the desired state of HttpCanary.
               This is what the user fills in when they write their YAML.
             properties:
+              auth:
+                description: Auth configures Secret-backed auth for this canary.
+                properties:
+                  apiKey:
+                    description: APIKey configures a custom header auth pattern.
+                    properties:
+                      headerName:
+                        description: HeaderName is the HTTP header that should receive
+                          the Secret value.
+                        minLength: 1
+                        type: string
+                      valueSecretRef:
+                        description: ValueSecretRef points to the Secret key containing
+                          the header value.
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - headerName
+                    - valueSecretRef
+                    type: object
+                  basic:
+                    description: Basic configures HTTP Basic authentication.
+                    properties:
+                      passwordSecretRef:
+                        description: PasswordSecretRef points to the Secret key containing
+                          the password.
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      usernameSecretRef:
+                        description: UsernameSecretRef points to the Secret key containing
+                          the username.
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - passwordSecretRef
+                    - usernameSecretRef
+                    type: object
+                  bearer:
+                    description: Bearer configures a bearer token, including JWT-style
+                      tokens.
+                    properties:
+                      tokenSecretRef:
+                        description: TokenSecretRef points to the Secret key containing
+                          the bearer token.
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - tokenSecretRef
+                    type: object
+                  type:
+                    description: Type selects the auth strategy Pulse should apply
+                      to the request.
+                    enum:
+                    - basic
+                    - bearer
+                    - apiKey
+                    type: string
+                required:
+                - type
+                type: object
               body:
                 description: Body is sent as the request body for methods that support
                   it.
@@ -128,6 +268,39 @@ spec:
                   - url
                   type: object
                 type: array
+              mcp:
+                description: MCP configures an MCP initialize + tools/list probe.
+                properties:
+                  clientName:
+                    default: pulse
+                    description: ClientName is the client name sent during initialize.
+                    type: string
+                  clientVersion:
+                    default: 0.1.0
+                    description: ClientVersion is the client version sent during initialize.
+                    type: string
+                  minToolCount:
+                    description: MinToolCount requires at least this many tools from
+                      tools/list.
+                    minimum: 0
+                    type: integer
+                  protocolVersion:
+                    default: "2025-11-25"
+                    description: ProtocolVersion is the MCP protocol version announced
+                      during initialize.
+                    type: string
+                  requireToolsCapability:
+                    default: true
+                    description: RequireToolsCapability requires initialize to advertise
+                      tools support.
+                    type: boolean
+                  requiredTools:
+                    description: RequiredTools is the set of tool names that must
+                      exist.
+                    items:
+                      type: string
+                    type: array
+                type: object
               method:
                 default: GET
                 description: Method is the HTTP method used for a simple one-request
@@ -140,6 +313,24 @@ spec:
                 - DELETE
                 - HEAD
                 type: string
+              outputs:
+                description: |-
+                  Outputs controls where probe execution telemetry is emitted.
+                  When omitted, the canary emits Prometheus metrics for backward compatibility.
+                items:
+                  description: HttpCanaryOutput defines one destination for canary
+                    execution telemetry.
+                  properties:
+                    type:
+                      description: Type is the output sink for the canary.
+                      enum:
+                      - prometheus
+                      - stdout
+                      type: string
+                  required:
+                  - type
+                  type: object
+                type: array
               url:
                 description: URL is the HTTP endpoint to check.
                 minLength: 1

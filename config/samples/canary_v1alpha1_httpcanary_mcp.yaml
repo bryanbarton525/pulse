@@ -1,19 +1,36 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sample-mcp-auth
+  namespace: default
+type: Opaque
+stringData:
+  token: replace-me
+---
 apiVersion: canary.iambarton.com/v1alpha1
 kind: HttpCanary
 metadata:
-  name: sample-mcp-initialize
+  name: sample-mcp-tools
   namespace: default
 spec:
   url: https://mcp.example.com/mcp
   interval: 30
-  method: POST
+  auth:
+    type: bearer
+    bearer:
+      tokenSecretRef:
+        name: sample-mcp-auth
+        key: token
   headers:
-    Content-Type: application/json
     Accept: application/json, text/event-stream
-  body: |
-    {"jsonrpc":"2.0","id":"pulse-initialize","method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"pulse","version":"0.1.0"}}}
-  expectedStatus: 200
-  containsText: '"protocolVersion"'
+  mcp:
+    protocolVersion: "2025-11-25"
+    clientName: pulse
+    clientVersion: 0.1.0
+    requireToolsCapability: true
+    minToolCount: 1
+    requiredTools:
+      - health.check
   outputs:
     - type: prometheus
     - type: stdout

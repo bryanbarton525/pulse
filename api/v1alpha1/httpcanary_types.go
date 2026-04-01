@@ -1,12 +1,16 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
 	HttpCanaryOutputPrometheus = "prometheus"
 	HttpCanaryOutputStdout     = "stdout"
+	HttpCanaryAuthTypeBasic    = "basic"
+	HttpCanaryAuthTypeBearer   = "bearer"
+	HttpCanaryAuthTypeAPIKey   = "apiKey"
 )
 
 // HttpCanaryOutput defines one destination for canary execution telemetry.
@@ -15,6 +19,75 @@ type HttpCanaryOutput struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Enum=prometheus;stdout
 	Type string `json:"type"`
+}
+
+// HttpCanaryAuth defines one Secret-backed HTTP auth strategy.
+type HttpCanaryAuth struct {
+	// Type selects the auth strategy Pulse should apply to the request.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=basic;bearer;apiKey
+	Type string `json:"type"`
+
+	// Basic configures HTTP Basic authentication.
+	Basic *HttpCanaryBasicAuth `json:"basic,omitempty"`
+
+	// Bearer configures a bearer token, including JWT-style tokens.
+	Bearer *HttpCanaryBearerAuth `json:"bearer,omitempty"`
+
+	// APIKey configures a custom header auth pattern.
+	APIKey *HttpCanaryAPIKeyAuth `json:"apiKey,omitempty"`
+}
+
+// HttpCanaryBasicAuth defines Secret references for HTTP Basic auth.
+type HttpCanaryBasicAuth struct {
+	// UsernameSecretRef points to the Secret key containing the username.
+	UsernameSecretRef corev1.SecretKeySelector `json:"usernameSecretRef"`
+
+	// PasswordSecretRef points to the Secret key containing the password.
+	PasswordSecretRef corev1.SecretKeySelector `json:"passwordSecretRef"`
+}
+
+// HttpCanaryBearerAuth defines a Secret reference for bearer token auth.
+type HttpCanaryBearerAuth struct {
+	// TokenSecretRef points to the Secret key containing the bearer token.
+	TokenSecretRef corev1.SecretKeySelector `json:"tokenSecretRef"`
+}
+
+// HttpCanaryAPIKeyAuth defines a Secret reference for custom header auth.
+type HttpCanaryAPIKeyAuth struct {
+	// HeaderName is the HTTP header that should receive the Secret value.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	HeaderName string `json:"headerName"`
+
+	// ValueSecretRef points to the Secret key containing the header value.
+	ValueSecretRef corev1.SecretKeySelector `json:"valueSecretRef"`
+}
+
+// HttpCanaryMCP defines one MCP tool-validation probe.
+type HttpCanaryMCP struct {
+	// ProtocolVersion is the MCP protocol version announced during initialize.
+	// +kubebuilder:default="2025-11-25"
+	ProtocolVersion string `json:"protocolVersion,omitempty"`
+
+	// ClientName is the client name sent during initialize.
+	// +kubebuilder:default="pulse"
+	ClientName string `json:"clientName,omitempty"`
+
+	// ClientVersion is the client version sent during initialize.
+	// +kubebuilder:default="0.1.0"
+	ClientVersion string `json:"clientVersion,omitempty"`
+
+	// RequireToolsCapability requires initialize to advertise tools support.
+	// +kubebuilder:default=true
+	RequireToolsCapability bool `json:"requireToolsCapability,omitempty"`
+
+	// MinToolCount requires at least this many tools from tools/list.
+	// +kubebuilder:validation:Minimum=0
+	MinToolCount int `json:"minToolCount,omitempty"`
+
+	// RequiredTools is the set of tool names that must exist.
+	RequiredTools []string `json:"requiredTools,omitempty"`
 }
 
 // HttpCanaryStep defines one HTTP request in a scripted journey.
@@ -66,6 +139,9 @@ type HttpCanarySpec struct {
 	// Headers are added to the request.
 	Headers map[string]string `json:"headers,omitempty"`
 
+	// Auth configures Secret-backed auth for this canary.
+	Auth *HttpCanaryAuth `json:"auth,omitempty"`
+
 	// Body is sent as the request body for methods that support it.
 	Body string `json:"body,omitempty"`
 
@@ -82,6 +158,9 @@ type HttpCanarySpec struct {
 
 	// ContainsText requires the response body to contain this substring.
 	ContainsText string `json:"containsText,omitempty"`
+
+	// MCP configures an MCP initialize + tools/list probe.
+	MCP *HttpCanaryMCP `json:"mcp,omitempty"`
 
 	// Journey defines a scripted sequence of HTTP requests.
 	Journey []HttpCanaryStep `json:"journey,omitempty"`

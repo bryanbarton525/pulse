@@ -18,9 +18,12 @@ import (
 
 func main() {
 	var configPath string
+	var authFilePath string
 	var listenAddr string
 	flag.StringVar(&configPath, "config", "/etc/pulse/probes.yaml",
 		"Path to the probe config file (mounted from ConfigMap).")
+	flag.StringVar(&authFilePath, "auth-file", "/etc/pulse-auth/auth.yaml",
+		"Path to the auth file (mounted from Secret).")
 	flag.StringVar(&listenAddr, "listen", ":9090", "Address to serve /metrics and /results on.")
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
@@ -40,6 +43,11 @@ func main() {
 		logger.Error(err, "Failed to load probe config")
 		os.Exit(1)
 	}
+	authStore, err := proberunner.LoadAuthStoreFromFile(authFilePath)
+	if err != nil {
+		logger.Error(err, "Failed to load probe auth store")
+		os.Exit(1)
+	}
 	logger.Info("Loaded probe config", "probeCount", len(config.Probes))
 
 	// ── Set up Prometheus registry ───────────────────────────
@@ -56,7 +64,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	runner := proberunner.NewRunner(logger, registry)
+	runner := proberunner.NewRunner(logger, registry, *authStore)
 	runner.Start(ctx, config)
 
 	// ── Start HTTP server ────────────────────────────────────
@@ -86,7 +94,7 @@ func main() {
 	// ConfigMap volume mounts use symlinks that get atomically swapped.
 	// fsnotify doesn't reliably detect symlink target changes across
 	// all platforms. Polling every 5s is simple and reliable.
-	go watchConfigReload(ctx, configPath, runner)
+	go watchConfigReload(ctx, configPath, authFilePath, runner)
 
 	// ── Graceful shutdown ────────────────────────────────────
 	//
@@ -117,13 +125,17 @@ func main() {
 // When the ConfigMap is updated, Kubernetes creates a new timestamped directory,
 // then atomically swaps the ..data symlink. The file's ModTime changes, which
 // we detect here.
-func watchConfigReload(ctx context.Context, path string, runner *proberunner.Runner) {
+func watchConfigReload(ctx context.Context, configPath string, authFilePath string, runner *proberunner.Runner) {
 	logger := ctrl.Log.WithName("proberunner")
-	var lastModTime time.Time
+	var configModTime time.Time
+	var authModTime time.Time
 
 	// Get initial mod time.
-	if info, err := os.Stat(path); err == nil {
-		lastModTime = info.ModTime()
+	if info, err := os.Stat(configPath); err == nil {
+		configModTime = info.ModTime()
+	}
+	if info, err := os.Stat(authFilePath); err == nil {
+		authModTime = info.ModTime()
 	}
 
 	ticker := time.NewTicker(5 * time.Second)
@@ -134,23 +146,34 @@ func watchConfigReload(ctx context.Context, path string, runner *proberunner.Run
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			info, err := os.Stat(path)
+			configInfo, err := os.Stat(configPath)
 			if err != nil {
 				logger.Error(err, "Failed to stat config file")
 				continue
 			}
+			authInfo, err := os.Stat(authFilePath)
+			if err != nil {
+				logger.Error(err, "Failed to stat auth file")
+				continue
+			}
 
-			if info.ModTime().After(lastModTime) {
-				logger.Info("Config file changed, reloading")
-				lastModTime = info.ModTime()
+			if configInfo.ModTime().After(configModTime) || authInfo.ModTime().After(authModTime) {
+				logger.Info("Runtime files changed, reloading")
+				configModTime = configInfo.ModTime()
+				authModTime = authInfo.ModTime()
 
-				newConfig, err := proberunner.LoadConfigFromFile(path)
+				newConfig, err := proberunner.LoadConfigFromFile(configPath)
 				if err != nil {
 					logger.Error(err, "Failed to reload config — keeping current probes")
 					continue
 				}
+				newAuthStore, err := proberunner.LoadAuthStoreFromFile(authFilePath)
+				if err != nil {
+					logger.Error(err, "Failed to reload auth store — keeping current probes")
+					continue
+				}
 
-				runner.Reload(ctx, newConfig)
+				runner.Reload(ctx, newConfig, *newAuthStore)
 				logger.Info("Config reloaded", "probeCount", len(newConfig.Probes))
 			}
 		}

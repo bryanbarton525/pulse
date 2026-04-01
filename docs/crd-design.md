@@ -23,12 +23,36 @@ All Pulse CRDs belong to the API group `canary.iambarton.com`. The current versi
 | `url` | string | Yes | — | minLength=1 | HTTP endpoint to check |
 | `method` | string | No | `GET` | `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` | HTTP method for simple single-request mode |
 | `headers` | map[string]string | No | — | — | Request headers for simple single-request mode |
+| `auth` | HttpCanaryAuth | No | — | `type` must be `basic`, `bearer`, or `apiKey` | Secret-backed auth for simple HTTP, journey, and MCP probes |
 | `body` | string | No | — | — | Request body for simple single-request mode |
 | `interval` | int | No | 30 | minimum=5 | Check frequency in seconds |
 | `expectedStatus` | int | No | 200 | 100-599 | HTTP status code that means healthy |
 | `containsText` | string | No | — | — | Required response-body substring for simple single-request mode |
+| `mcp` | HttpCanaryMCP | No | — | — | MCP initialize plus tools/list validation over HTTP |
 | `journey` | []HttpCanaryStep | No | — | step `name` and `url` required | Ordered multi-step HTTP journey |
 | `outputs` | []HttpCanaryOutput | No | `[{type: prometheus}]` | `type` must be `prometheus` or `stdout` | Per-canary telemetry sinks |
+
+### HttpCanaryAuth Fields
+
+| Field | Type | Required | Validation | Description |
+|-------|------|----------|------------|-------------|
+| `type` | string | Yes | `basic`, `bearer`, `apiKey` | Auth strategy |
+| `basic.usernameSecretRef` | SecretKeySelector | With `type: basic` | Secret ref required by runtime | Username for HTTP Basic auth |
+| `basic.passwordSecretRef` | SecretKeySelector | With `type: basic` | Secret ref required by runtime | Password for HTTP Basic auth |
+| `bearer.tokenSecretRef` | SecretKeySelector | With `type: bearer` | Secret ref required by runtime | Bearer token, including JWT-style tokens |
+| `apiKey.headerName` | string | With `type: apiKey` | minLength=1 | Header that receives the Secret value |
+| `apiKey.valueSecretRef` | SecretKeySelector | With `type: apiKey` | Secret ref required by runtime | Secret-backed header value |
+
+### HttpCanaryMCP Fields
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `protocolVersion` | string | No | `2025-11-25` | Protocol version announced in `initialize` |
+| `clientName` | string | No | `pulse` | Client name sent in `initialize` |
+| `clientVersion` | string | No | `0.1.0` | Client version sent in `initialize` |
+| `requireToolsCapability` | bool | No | `true` | Require `initialize` to advertise tool support |
+| `minToolCount` | int | No | `0` | Minimum number of tools returned by `tools/list` |
+| `requiredTools` | []string | No | — | Tool names that must be present in `tools/list` |
 
 ### HttpCanaryOutput Fields
 
@@ -52,6 +76,8 @@ All Pulse CRDs belong to the API group `canary.iambarton.com`. The current versi
 
 - If `journey` is empty, Pulse executes one request using the top-level `url`, `method`, `headers`, `body`, `expectedStatus`, and `containsText` fields.
 - If `journey` is present, Pulse executes the steps in order and does not execute the top-level request fields.
+- If `auth` is present, Pulse resolves the referenced Secret values in the canary namespace and applies the generated auth headers at runtime.
+- If `mcp` is present, Pulse ignores `method`, `body`, `expectedStatus`, and `containsText` for execution and performs `initialize`, `notifications/initialized`, and `tools/list` over HTTP instead.
 - Journey steps share cookies within a single check cycle, but not across intervals.
 - The top-level `url` remains required and is still the URL shown in `kubectl get httpcanaries`, so it should represent the canary's primary or final target.
 - If `outputs` is omitted, Pulse emits Prometheus metrics for backward compatibility.

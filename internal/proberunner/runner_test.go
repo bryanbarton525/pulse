@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -41,8 +42,9 @@ func TestExecuteRequestSupportsMethodHeadersBodyAndContainsText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newHTTPClient() error = %v", err)
 	}
+	runner := NewRunner(logr.Discard(), prometheus.NewRegistry(), AuthStore{})
 
-	result := executeRequest(
+	result := runner.executeRequest(
 		"default/sample",
 		client,
 		server.URL,
@@ -51,6 +53,7 @@ func TestExecuteRequestSupportsMethodHeadersBodyAndContainsText(t *testing.T) {
 		`{"username":"demo"}`,
 		http.StatusOK,
 		"welcome",
+		nil,
 	)
 
 	if !result.Healthy {
@@ -61,6 +64,161 @@ func TestExecuteRequestSupportsMethodHeadersBodyAndContainsText(t *testing.T) {
 	}
 	if !strings.Contains(result.Message, "matched response text") {
 		t.Fatalf("message = %q, want contains matched response text", result.Message)
+	}
+}
+
+func TestExecuteRequestSupportsBearerAuth(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer demo-token" {
+			t.Fatalf("authorization = %q, want %q", got, "Bearer demo-token")
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("authorized"))
+	}))
+	defer server.Close()
+
+	client, err := newHTTPClient()
+	if err != nil {
+		t.Fatalf("newHTTPClient() error = %v", err)
+	}
+	runner := NewRunner(logr.Discard(), prometheus.NewRegistry(), AuthStore{Values: map[string]string{"token": "demo-token"}})
+
+	result := runner.executeRequest(
+		"default/authenticated",
+		client,
+		server.URL,
+		http.MethodGet,
+		nil,
+		"",
+		http.StatusOK,
+		"authorized",
+		&ProbeAuth{Type: "bearer", TokenCredentialID: "token"},
+	)
+
+	if !result.Healthy {
+		t.Fatalf("result healthy = false, message = %q", result.Message)
+	}
+}
+
+func TestExecuteMCPProbeValidatesRequiredTools(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	methods := make([]string, 0, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+
+		var request map[string]any
+		if err := json.Unmarshal(body, &request); err != nil {
+			t.Fatalf("unmarshal request: %v", err)
+		}
+
+		method, _ := request["method"].(string)
+		mu.Lock()
+		methods = append(methods, method)
+		mu.Unlock()
+
+		switch method {
+		case "initialize":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"pulse-initialize","result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{"listChanged":true}}}}`))
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"pulse-tools-list","result":{"tools":[{"name":"health.check"},{"name":"search.docs"}]}}`))
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	client, err := newHTTPClient()
+	if err != nil {
+		t.Fatalf("newHTTPClient() error = %v", err)
+	}
+	runner := NewRunner(logr.Discard(), prometheus.NewRegistry(), AuthStore{})
+
+	result := runner.executeMCPProbe(client, Probe{
+		Name: "default/mcp-tools",
+		URL:  server.URL,
+		MCP: &ProbeMCP{
+			ProtocolVersion:        "2025-11-25",
+			ClientName:             "pulse",
+			ClientVersion:          "0.1.0",
+			RequireToolsCapability: true,
+			MinToolCount:           1,
+			RequiredTools:          []string{"health.check"},
+		},
+	})
+
+	if !result.Healthy {
+		t.Fatalf("MCP probe healthy = false, message = %q", result.Message)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got := strings.Join(methods, ","); got != "initialize,notifications/initialized,tools/list" {
+		t.Fatalf("methods = %q", got)
+	}
+}
+
+func TestExecuteMCPProbeReportsMissingRequiredTool(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+
+		var request map[string]any
+		if err := json.Unmarshal(body, &request); err != nil {
+			t.Fatalf("unmarshal request: %v", err)
+		}
+
+		switch request["method"] {
+		case "initialize":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"pulse-initialize","result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{"listChanged":true}}}}`))
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"pulse-tools-list","result":{"tools":[{"name":"health.check"}]}}`))
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	client, err := newHTTPClient()
+	if err != nil {
+		t.Fatalf("newHTTPClient() error = %v", err)
+	}
+	runner := NewRunner(logr.Discard(), prometheus.NewRegistry(), AuthStore{})
+
+	result := runner.executeMCPProbe(client, Probe{
+		Name: "default/mcp-tools",
+		URL:  server.URL,
+		MCP: &ProbeMCP{
+			ProtocolVersion:        "2025-11-25",
+			ClientName:             "pulse",
+			ClientVersion:          "0.1.0",
+			RequireToolsCapability: true,
+			RequiredTools:          []string{"search.docs"},
+		},
+	})
+
+	if result.Healthy {
+		t.Fatal("MCP probe healthy = true, want false")
+	}
+	if !strings.Contains(result.Message, "missing required tools") {
+		t.Fatalf("message = %q, want contains missing required tools", result.Message)
 	}
 }
 
@@ -98,7 +256,7 @@ func TestExecuteJourneyReusesCookiesAcrossSteps(t *testing.T) {
 		t.Fatalf("newHTTPClient() error = %v", err)
 	}
 
-	runner := NewRunner(logr.Discard(), prometheus.NewRegistry())
+	runner := NewRunner(logr.Discard(), prometheus.NewRegistry(), AuthStore{})
 	result := runner.executeJourney(client, Probe{
 		Name:           "default/sample-ui-login",
 		URL:            server.URL + "/dashboard",
@@ -142,7 +300,7 @@ func TestExecuteCheckStdoutOnlySkipsPrometheusAndWritesJSON(t *testing.T) {
 	defer server.Close()
 
 	registry := prometheus.NewRegistry()
-	runner := NewRunner(logr.Discard(), registry)
+	runner := NewRunner(logr.Discard(), registry, AuthStore{})
 
 	var stdout bytes.Buffer
 	runner.stdoutWriter = &stdout
