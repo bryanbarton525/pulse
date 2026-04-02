@@ -13,7 +13,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -404,7 +403,9 @@ func (r *HttpCanaryReconciler) ensureDeployment(ctx context.Context) error {
 	result, err := controllerutil.CreateOrUpdate(ctx, r.Client, deploy, func() error {
 		deploy.Labels = managedLabels
 
-		deploy.Spec.Replicas = ptr.To(int32(1))
+		replicas := new(int32)
+		*replicas = 1
+		deploy.Spec.Replicas = replicas
 		deploy.Spec.Selector = &metav1.LabelSelector{
 			MatchLabels: map[string]string{
 				"app.kubernetes.io/name": ProbeRunnerName,
