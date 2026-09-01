@@ -9,3 +9,8 @@
 # Re-include Go module files
 !go.mod
 !go.sum
+
+# Re-include converted model assets, which the probe runner and incident engine
+# images bake in. Without this the deny-all rule above blocks every non-Go file,
+# so the images would build fine and then fail at runtime with a missing model.
+!hack/models/**

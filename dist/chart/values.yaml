@@ -40,6 +40,21 @@ manager:
     repository: pulse-probe-runner
     tag: latest
 
+  ## Image for the incident engine, which correlates failures and performs
+  ## AnomalyPolicy actions. Only deployed when a canary opts into
+  ## spec.intelligence, so this is unused on clusters not using the feature.
+  ##
+  incidentEngineImage:
+    repository: pulse-incident-engine
+    tag: latest
+
+  ## Number of probe runner replicas. Probes are partitioned across them by a
+  ## stable hash of the probe name. One replica reproduces the original
+  ## single-pod behaviour; raise it when a single runner can no longer keep up
+  ## with the check rate.
+  ##
+  probeRunnerShards: 1
+
   ## Optional override for the probe runner /results URL
   ##
   probeRunnerResultsURL: ""

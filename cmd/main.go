@@ -67,6 +67,7 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var probeRunnerImage string
+	var incidentEngineImage string
 	var probeRunnerImagePullSecrets string
 	var probeRunnerResultsURL string
 	var secureMetrics bool
@@ -88,6 +89,10 @@ func main() {
 	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	defaultProbeRunnerImage := envOrDefault("PULSE_PROBE_RUNNER_IMAGE", "pulse-probe-runner:latest")
+	defaultIncidentEngineImage := envOrDefault(
+		"PULSE_INCIDENT_ENGINE_IMAGE", "pulse-incident-engine:latest")
+	flag.StringVar(&incidentEngineImage, "incident-engine-image", defaultIncidentEngineImage,
+		"Container image for the incident engine, which correlates failures and performs policy actions.")
 	flag.StringVar(&probeRunnerImage, "probe-runner-image", defaultProbeRunnerImage,
 		"Container image for the probe runner Deployment.")
 	flag.StringVar(&probeRunnerImagePullSecrets, "probe-runner-image-pull-secrets",
@@ -206,19 +211,20 @@ func main() {
 		namespace = "pulse-system"
 	}
 
-	// Register the HttpCanary controller with the manager.
+	// Register the Canary controller with the manager.
 	//
 	// The reconciler now needs extra config beyond Client/Scheme:
 	//   - Namespace: where to create the ConfigMap, Deployment, and Service
 	//   - ProbeRunnerImage: what image the Deployment should run
-	if err := (&controller.HttpCanaryReconciler{
+	if err := (&controller.CanaryReconciler{
 		Client:                      mgr.GetClient(),
 		Scheme:                      mgr.GetScheme(),
 		Namespace:                   namespace,
 		ProbeRunnerImage:            probeRunnerImage,
+		IncidentEngineImage:         incidentEngineImage,
 		ProbeRunnerImagePullSecrets: parseLocalObjectReferences(probeRunnerImagePullSecrets),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "HttpCanary")
+		setupLog.Error(err, "Failed to create controller", "controller", "Canary")
 		os.Exit(1)
 	}
 
@@ -229,10 +235,15 @@ func main() {
 	// each HttpCanary CR's .status. Separated from the reconciler so that
 	// status polling runs exactly ONCE per interval, not once per CR.
 	if err := mgr.Add(&controller.StatusSyncer{
-		Client:     mgr.GetClient(),
-		Namespace:  namespace,
-		Interval:   15 * time.Second,
-		ResultsURL: probeRunnerResultsURL,
+		Client:            mgr.GetClient(),
+		Namespace:         namespace,
+		Interval:          15 * time.Second,
+		ResultsURL:        probeRunnerResultsURL,
+		IncidentEngineURL: os.Getenv("PULSE_INCIDENT_ENGINE_URL"),
+		// The Events this records are the only place an incident shows up in
+		// `kubectl describe`, since neither the runner nor the engine holds a
+		// Kubernetes client.
+		Recorder: mgr.GetEventRecorderFor("pulse-intelligence"),
 	}); err != nil {
 		setupLog.Error(err, "Failed to register status syncer")
 		os.Exit(1)

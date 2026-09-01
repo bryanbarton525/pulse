@@ -17,6 +17,9 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 // ProbeResult holds the outcome of the most recent check for one probe.
@@ -29,6 +32,23 @@ type ProbeResult struct {
 	Message        string    `json:"message"`
 	URL            string    `json:"url"`
 	ExpectedStatus int       `json:"expectedStatus"`
+
+	// BodySnippet is the truncated response body, kept in memory so the drift
+	// evaluator can embed it.
+	//
+	// The `json:"-"` tag is load-bearing, not incidental: this field must never
+	// cross /results, reach the controller, or land in a CR status. Response
+	// bodies can contain customer data, and the whole design keeps them inside
+	// this pod.
+	BodySnippet string `json:"-"`
+
+	// DriftScore and LatencyZScore are the model-driven scores for the most
+	// recent PASSING check. Zero means not evaluated or still warming up.
+	DriftScore    float64 `json:"driftScore,omitempty"`
+	LatencyZScore float64 `json:"latencyZScore,omitempty"`
+
+	// Policy names the AnomalyPolicy governing this probe, if any.
+	Policy string `json:"policy,omitempty"`
 }
 
 // Runner manages the lifecycle of all probe goroutines.
@@ -52,6 +72,12 @@ type Runner struct {
 	// Called during Reload() or shutdown.
 	cancel context.CancelFunc
 
+	// running tracks probe goroutines so Stop and Reload can wait for them to
+	// finish. Cancelling alone is not enough: a check already inside its HTTP
+	// call keeps running afterwards, and anything it touches on the way out --
+	// the observation shipper in particular -- must still be alive.
+	running sync.WaitGroup
+
 	logger logr.Logger
 
 	// Prometheus metrics — registered once, updated by every check.
@@ -60,6 +86,16 @@ type Runner struct {
 	checkHealthy  *prometheus.GaugeVec
 	stdoutWriter  io.Writer
 	authStore     map[string]string
+
+	// intelligence is nil unless this runner was built with a model. When nil,
+	// every probe behaves exactly as it did before this feature existed.
+	intelligence *Intelligence
+}
+
+// SetIntelligence attaches the model-driven evaluator. Called once at startup,
+// before Start.
+func (r *Runner) SetIntelligence(intelligence *Intelligence) {
+	r.intelligence = intelligence
 }
 
 // NewRunner creates a Runner and registers Prometheus metrics.
@@ -135,7 +171,11 @@ func (r *Runner) Start(ctx context.Context, config *ProbeConfig) {
 		// Without this, all goroutines would share the same `probe` pointer
 		// and would all check the last probe in the slice.
 		p := probe
-		go r.runProbe(ctx, p)
+		r.running.Add(1)
+		go func() {
+			defer r.running.Done()
+			r.runProbe(ctx, p)
+		}()
 	}
 
 	r.logger.Info("Started probe runner", "probeCount", len(config.Probes))
@@ -149,15 +189,41 @@ func (r *Runner) Start(ctx context.Context, config *ProbeConfig) {
 func (r *Runner) Reload(ctx context.Context, config *ProbeConfig, authStore AuthStore) {
 	r.logger.Info("Reloading probe configuration", "probeCount", len(config.Probes))
 
-	// Stop all existing probe goroutines.
+	// Stop all existing probe goroutines and WAIT for them.
+	//
+	// Without the wait, a reload starts a second goroutine for every probe
+	// while the previous one is still finishing its check, so each probe is
+	// briefly executed twice and its metrics double-counted.
 	if r.cancel != nil {
 		r.cancel()
+		if !r.waitForProbes(StopTimeout) {
+			r.logger.Info("Some probes were still running at reload; continuing anyway")
+		}
 	}
 
-	// Clear stale results — probes that were removed shouldn't linger.
+	// Keep results and learned baselines for probes that still exist.
+	//
+	// Wiping everything here would mean that editing ONE canary blinds drift
+	// and latency detection for every other probe in the cluster for a full
+	// warmup period — and config changes are common, so the detectors would
+	// spend much of their life warming up and never fire.
+	surviving := make(map[string]struct{}, len(config.Probes))
+	for _, probe := range config.Probes {
+		surviving[probe.Name] = struct{}{}
+	}
+
 	r.mu.Lock()
-	r.results = make(map[string]*ProbeResult)
+	for name := range r.results {
+		if _, found := surviving[name]; !found {
+			delete(r.results, name)
+		}
+	}
 	r.mu.Unlock()
+
+	if r.intelligence != nil {
+		r.intelligence.Retain(surviving)
+	}
+
 	r.setAuthStore(authStore)
 
 	r.Start(ctx, config)
@@ -179,10 +245,44 @@ func (r *Runner) GetResults() []ProbeResult {
 	return results
 }
 
-// Stop cancels all running probe goroutines.
-func (r *Runner) Stop() {
+// StopTimeout bounds how long Stop waits for in-flight checks.
+//
+// A check can be inside an HTTP call with a 10s client timeout when shutdown
+// begins, so the wait has to allow for that. It stays well inside a default
+// 30s Kubernetes termination grace period.
+const StopTimeout = 15 * time.Second
+
+// Stop cancels all probe goroutines and waits for them to finish.
+//
+// Waiting matters: callers shut down the observation shipper after this
+// returns, and a check still in flight would otherwise send on a closed
+// channel and panic the process during what should be a clean shutdown.
+//
+// It reports whether every goroutine finished. A false return means something
+// was still running at the deadline, and the caller should leave downstream
+// components alive rather than tearing them down underneath it.
+func (r *Runner) Stop() bool {
 	if r.cancel != nil {
 		r.cancel()
+	}
+
+	return r.waitForProbes(StopTimeout)
+}
+
+// waitForProbes blocks until every probe goroutine has returned, or the
+// timeout elapses.
+func (r *Runner) waitForProbes(timeout time.Duration) bool {
+	finished := make(chan struct{})
+	go func() {
+		r.running.Wait()
+		close(finished)
+	}()
+
+	select {
+	case <-finished:
+		return true
+	case <-time.After(timeout):
+		return false
 	}
 }
 
@@ -224,8 +324,8 @@ func (r *Runner) executeCheck(probe Probe) {
 			URL:            probe.URL,
 			ExpectedStatus: probe.ExpectedStatus,
 		}
-		r.recordResult(probe.Name, result)
-		r.emitResult(probe, result, time.Since(start))
+		previous := r.recordResult(probe.Name, result)
+		r.emitResult(probe, result, previous, time.Since(start))
 		logger.Info("Check failed", "status", result.StatusCode, "message", result.Message, "duration", time.Since(start))
 		return
 	}
@@ -241,16 +341,16 @@ func (r *Runner) executeCheck(probe Probe) {
 			URL:            probe.URL,
 			ExpectedStatus: probe.ExpectedStatus,
 		}
-		r.recordResult(probe.Name, result)
-		r.emitResult(probe, result, time.Since(start))
+		previous := r.recordResult(probe.Name, result)
+		r.emitResult(probe, result, previous, time.Since(start))
 		logger.Info("Check failed", "error", err, "duration", time.Since(start))
 		return
 	}
 
 	result := r.executeProbe(httpClient, probe)
 	duration := time.Since(start)
-	r.recordResult(probe.Name, result)
-	r.emitResult(probe, result, duration)
+	previous := r.recordResult(probe.Name, result)
+	r.emitResult(probe, result, previous, duration)
 	if result.Healthy {
 		logger.Info("Check passed", "status", result.StatusCode, "duration", duration)
 		return
@@ -259,7 +359,18 @@ func (r *Runner) executeCheck(probe Probe) {
 	logger.Info("Check failed", "status", result.StatusCode, "message", result.Message, "duration", duration)
 }
 
-func (r *Runner) emitResult(probe Probe, result *ProbeResult, duration time.Duration) {
+// emitResult is the single choke point every check result flows through,
+// which is why the intelligence layer hooks in here rather than at each of the
+// three call sites in executeCheck.
+func (r *Runner) emitResult(probe Probe, result *ProbeResult, previous *ProbeResult, duration time.Duration) {
+	if probe.Intelligence != nil {
+		result.Policy = probe.Intelligence.Policy
+	}
+
+	if r.intelligence != nil {
+		r.intelligence.Evaluate(probe, result, previous, duration)
+	}
+
 	if shouldEmitPrometheus(probe.Outputs) {
 		r.checkDuration.WithLabelValues(probe.Name).Observe(duration.Seconds())
 		if result.Healthy {
@@ -316,6 +427,10 @@ func shouldEmitStdout(outputs []ProbeOutput) bool {
 }
 
 func (r *Runner) executeProbe(httpClient *http.Client, probe Probe) *ProbeResult {
+	if probe.Type == "grpc" {
+		return r.executeGrpcRequest(probe)
+	}
+
 	if probe.MCP != nil {
 		return r.executeMCPProbe(httpClient, probe)
 	}
@@ -414,6 +529,66 @@ func (r *Runner) executeRequest(
 		Message:        message,
 		URL:            url,
 		ExpectedStatus: expectedStatus,
+		// Carried in memory only, for body-drift scoring. Never serialized —
+		// see the field's documentation on ProbeResult.
+		BodySnippet: string(responseBody),
+	}
+}
+
+func (r *Runner) executeGrpcRequest(probe Probe) *ProbeResult {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := grpc.DialContext(ctx, probe.URL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return &ProbeResult{
+			Name:           probe.Name,
+			Healthy:        false,
+			StatusCode:     2, // UNKNOWN
+			LastCheckTime:  time.Now(),
+			Message:        fmt.Sprintf("Failed to dial gRPC: %v", err),
+			URL:            probe.URL,
+			ExpectedStatus: 0, // 0 = OK in gRPC
+		}
+	}
+	defer conn.Close()
+
+	client := healthpb.NewHealthClient(conn)
+	req := &healthpb.HealthCheckRequest{Service: probe.GrpcService}
+	resp, err := client.Check(ctx, req)
+
+	if err != nil {
+		return &ProbeResult{
+			Name:           probe.Name,
+			Healthy:        false,
+			StatusCode:     14, // UNAVAILABLE
+			LastCheckTime:  time.Now(),
+			Message:        fmt.Sprintf("Health check failed: %v", err),
+			URL:            probe.URL,
+			ExpectedStatus: 0,
+		}
+	}
+
+	if resp.Status != healthpb.HealthCheckResponse_SERVING {
+		return &ProbeResult{
+			Name:           probe.Name,
+			Healthy:        false,
+			StatusCode:     0,
+			LastCheckTime:  time.Now(),
+			Message:        fmt.Sprintf("Service is not SERVING, status: %s", resp.Status.String()),
+			URL:            probe.URL,
+			ExpectedStatus: 0,
+		}
+	}
+
+	return &ProbeResult{
+		Name:           probe.Name,
+		Healthy:        true,
+		StatusCode:     0,
+		LastCheckTime:  time.Now(),
+		Message:        "gRPC health check succeeded",
+		URL:            probe.URL,
+		ExpectedStatus: 0,
 	}
 }
 
@@ -795,10 +970,18 @@ func hasHeader(headers map[string]string, target string) bool {
 	return false
 }
 
-func (r *Runner) recordResult(name string, result *ProbeResult) {
+// recordResult stores the latest result and returns the one it replaced.
+//
+// Returning the previous result is what lets the intelligence layer tell a
+// failure ONSET from a probe that has been failing for an hour, without keeping
+// any state of its own.
+func (r *Runner) recordResult(name string, result *ProbeResult) *ProbeResult {
 	r.mu.Lock()
+	previous := r.results[name]
 	r.results[name] = result
 	r.mu.Unlock()
+
+	return previous
 }
 
 func newHTTPClient() (*http.Client, error) {

@@ -1,0 +1,120 @@
+# A complete AnomalyPolicy, showing every block. Almost all of it is optional —
+# see canary_v1alpha1_anomalypolicy_minimal.yaml for the smallest useful one.
+apiVersion: canary.iambarton.com/v1alpha1
+kind: AnomalyPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: pulse
+    app.kubernetes.io/managed-by: kustomize
+  name: prod-triage
+  namespace: pulse-system
+spec:
+  # Omit `model` entirely to use the models baked into the Pulse images:
+  # potion-base-32M for body drift, all-MiniLM-L6-v2 for correlation.
+  # Override only to bring your own.
+
+  triggers:
+    # Scores the response body of checks that PASSED. Catches the failures your
+    # assertions cannot express: an empty result set, a stack trace inside a
+    # 200, a maintenance page returned with the right status code.
+    bodyDrift:
+      enabled: true
+      threshold: "0.15"          # cosine distance from the learned baseline
+      warmupChecks: 20           # samples before scoring is trusted
+      consecutiveBreaches: 2     # debounce, so one odd response is not an alert
+      maxBodyBytes: 4096
+      sampleEvery: 1             # raise if the hot path ever becomes CPU-bound
+      redact:                    # stripped BEFORE the body is embedded or logged
+        - "\"email\"\\s*:\\s*\"[^\"]*\""
+        - "Bearer\\s+[A-Za-z0-9._-]+"
+
+    # Pure statistics, no model: a check that still passes but is getting slower.
+    latencyShift:
+      enabled: true
+      zScoreThreshold: "3.0"
+      warmupChecks: 30
+      consecutiveBreaches: 3
+
+    # Merges concurrent failures into ONE incident when there is evidence they
+    # are related — a declared dependency, or failure text that says both checks
+    # hit the same wall. Simultaneity alone is never enough.
+    failureCorrelation:
+      enabled: true
+      windowSeconds: 120
+      similarityThreshold: "0.85"
+      # Optional guardrail. Omit it and every canary in the cluster is a
+      # candidate, which is the intended default — evidence does the filtering.
+      candidateSelector:
+        matchLabels:
+          tier: prod
+
+    # Routes NEW failure shapes to investigation and keeps known ones quiet.
+    failureNovelty:
+      enabled: true
+      clusterThreshold: "0.80"
+      settlingPeriodSeconds: 300
+
+  topology:
+    # Declared edges may reference canaries governed by a DIFFERENT policy.
+    # Topology follows infrastructure; policies follow team ownership.
+    dependsOn:
+      - canary: default/payments-api
+        upstream:
+          - data/postgres-health
+          - auth/auth-api
+    # Learns co-occurrence and PROPOSES edges in .status.inferredDependencies.
+    # Proposals never affect correlation until a human copies one into
+    # dependsOn above.
+    inferDependencies: true
+    inferMinObservations: 5
+    inferMinConfidence: "0.85"
+
+  incidents:
+    # Downstream victims are silent by default — collapsing a storm into one
+    # page is the point. Set this to get a one-line "affected by incident X"
+    # note in your own channel without a second full page.
+    notifyOnDownstream: false
+
+  # Actions fire IN ORDER for the root cause's policy. Putting llm before slack
+  # is what lets the notification carry the analysis.
+  actions:
+    - name: local
+      type: metric          # Prometheus gauge plus a Kubernetes Event; no credentials
+
+    - name: investigate
+      type: llm
+      llm:
+        # A CHAT model. If you run SGLang, this is your generation server —
+        # it cannot also serve embeddings.
+        endpoint: http://sglang-gateway.ai.svc:8000/v1/chat/completions
+        model: gemma-3-27b-it
+        apiKeySecretRef:
+          name: sglang-auth
+          key: token
+        contextChecks: 20
+        maxTokens: 1024
+        timeoutSeconds: 60
+
+    - name: notify
+      type: slack
+      slack:
+        webhookSecretRef:
+          name: slack-auth
+          key: webhook-url
+        includeInvestigation: true
+
+    - name: ship-logs
+      type: observability
+      observability:
+        provider: datadog   # datadog | loki | elasticsearch | splunk | otlp | generic
+        endpoint: https://http-intake.logs.datadoghq.com
+        credentialSecretRef:
+          name: datadog-auth
+          key: api-key
+        tags:
+          env: prod
+          team: sre
+
+  throttle:
+    cooldownSeconds: 900    # per incident shape, per action
+    maxPerHour: 4

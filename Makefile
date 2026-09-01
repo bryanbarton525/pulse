@@ -2,6 +2,12 @@
 IMG ?= controller:latest
 PROBE_RUNNER_IMG ?= pulse-probe-runner:latest
 PROBE_RUNNER_IMAGE ?= $(PROBE_RUNNER_IMG)
+INCIDENT_ENGINE_IMG ?= pulse-incident-engine:latest
+INCIDENT_ENGINE_IMAGE ?= $(INCIDENT_ENGINE_IMG)
+
+# Where `make fetch-models` puts converted weights. Gitignored, and baked into
+# the images at build time.
+MODELS_DIR ?= hack/models
 PROBE_RUNNER_IMAGE_PULL_SECRETS ?=
 PROBE_RUNNER_RESULTS_URL ?=
 
@@ -112,6 +118,14 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 build: manifests generate fmt vet ## Build manager binary.
 	go build -o bin/manager cmd/main.go
 
+.PHONY: build-incidentengine
+build-incidentengine: manifests generate fmt vet ## Build incident engine binary (no ONNX; add TAGS=onnx for the real model).
+	go build $(if $(TAGS),-tags $(TAGS),) -o bin/incident-engine cmd/incidentengine/main.go
+
+.PHONY: fetch-models
+fetch-models: ## Download and convert the embedding models baked into the images.
+	python3 hack/fetch-models.py $(MODELS_DIR)
+
 .PHONY: build-proberunner
 build-proberunner: manifests generate fmt vet ## Build probe runner binary.
 	go build -o bin/probe-runner cmd/proberunner/main.go
@@ -135,8 +149,23 @@ docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} .
 
 .PHONY: docker-build-proberunner
-docker-build-proberunner: ## Build docker image with the probe runner.
+docker-build-proberunner: models-present ## Build docker image with the probe runner.
 	$(CONTAINER_TOOL) build -f Dockerfile.proberunner -t ${PROBE_RUNNER_IMG} .
+
+.PHONY: docker-build-incidentengine
+docker-build-incidentengine: models-present ## Build docker image with the incident engine.
+	$(CONTAINER_TOOL) build -f Dockerfile.incidentengine -t ${INCIDENT_ENGINE_IMG} .
+
+.PHONY: docker-push-incidentengine
+docker-push-incidentengine: ## Push the incident engine image.
+	$(CONTAINER_TOOL) push ${INCIDENT_ENGINE_IMG}
+
+# The images COPY model directories, so a missing one fails the build with a
+# confusing docker error. Check for it up front and say what to run instead.
+.PHONY: models-present
+models-present:
+	@test -f $(MODELS_DIR)/potion/model.bin && test -f $(MODELS_DIR)/minilm/model.onnx \
+		|| (echo "Models are missing. Run: make fetch-models" && exit 1)
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
@@ -162,6 +191,18 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
 	- $(CONTAINER_TOOL) buildx rm pulse-builder
 	rm Dockerfile.cross
+
+# ONNX Runtime ships binaries only for amd64 and arm64, so the incident engine
+# cannot target the full platform list the other images use.
+INCIDENT_ENGINE_PLATFORMS ?= linux/amd64,linux/arm64
+
+.PHONY: docker-buildx-incidentengine
+docker-buildx-incidentengine: models-present ## Build and push the incident engine image for amd64 and arm64.
+	- $(CONTAINER_TOOL) buildx create --name pulse-builder
+	$(CONTAINER_TOOL) buildx use pulse-builder
+	- $(CONTAINER_TOOL) buildx build --push --platform=$(INCIDENT_ENGINE_PLATFORMS) \
+		--tag ${INCIDENT_ENGINE_IMG} -f Dockerfile.incidentengine .
+	- $(CONTAINER_TOOL) buildx rm pulse-builder
 
 .PHONY: docker-buildx-proberunner
 docker-buildx-proberunner: ## Build and push probe runner image for cross-platform support

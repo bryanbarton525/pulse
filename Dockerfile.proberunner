@@ -1,4 +1,9 @@
-# Build the probe runner binary
+# Build the probe runner binary.
+#
+# This image stays CGO-free on distroless/static even with model intelligence
+# enabled. That is the whole point of the two-tier embedding split: the binary
+# that scales to N replicas runs static Model2Vec embeddings, which are a token
+# lookup and a mean — pure Go, no ONNX Runtime, no libc.
 FROM golang:1.26 AS builder
 ARG TARGETOS
 ARG TARGETARCH
@@ -15,6 +20,12 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o pr
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /workspace/probe-runner .
+
+# The static body-drift model. Populate hack/models with `make fetch-models`.
+# A missing model disables drift scoring with a logged warning rather than
+# failing startup, so this stays optional for anyone building without it.
+COPY --from=builder /workspace/hack/models/potion /models/potion
+
 USER 65532:65532
 
 ENTRYPOINT ["/probe-runner"]

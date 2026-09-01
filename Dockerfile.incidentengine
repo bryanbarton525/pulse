@@ -1,0 +1,53 @@
+# Build the incident engine binary.
+#
+# This is the only Pulse image with cgo and ONNX Runtime. It runs a single
+# replica and embeds only on failures, so the cost of a transformer is paid
+# once per outage rather than once per check.
+FROM golang:1.26 AS builder
+ARG TARGETOS
+ARG TARGETARCH
+ARG ONNXRUNTIME_VERSION=1.22.0
+
+WORKDIR /workspace
+
+# Fetch the ONNX Runtime shared library for the target architecture.
+# onnxruntime_go dlopens this at startup; it is not linked at build time.
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) ORT_ARCH=x64 ;; \
+      arm64) ORT_ARCH=aarch64 ;; \
+      *) echo "ONNX Runtime publishes no build for ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/onnxruntime.tgz \
+      "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-${ORT_ARCH}-${ONNXRUNTIME_VERSION}.tgz"; \
+    mkdir -p /opt/onnxruntime; \
+    tar -xzf /tmp/onnxruntime.tgz -C /opt/onnxruntime --strip-components=1; \
+    cp /opt/onnxruntime/lib/libonnxruntime.so* /usr/local/lib/; \
+    ln -sf /usr/local/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION} /usr/local/lib/libonnxruntime.so
+
+COPY go.mod go.mod
+COPY go.sum go.sum
+RUN go mod download
+
+COPY . .
+
+# The onnx build tag is what pulls in the cgo backend. Without it the binary
+# compiles fine and reports that the backend is unavailable.
+RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -tags onnx -o incident-engine cmd/incidentengine/main.go
+
+# distroless/cc rather than distroless/static: ONNX Runtime needs glibc for
+# dlopen and libstdc++ for its own symbols. distroless/static has neither.
+FROM gcr.io/distroless/cc-debian12:nonroot
+WORKDIR /
+
+COPY --from=builder /workspace/incident-engine .
+COPY --from=builder /usr/local/lib/libonnxruntime.so* /usr/local/lib/
+COPY --from=builder /workspace/hack/models/minilm /models/minilm
+
+ENV ONNXRUNTIME_SHARED_LIBRARY_PATH=/usr/local/lib/libonnxruntime.so
+ENV LD_LIBRARY_PATH=/usr/local/lib
+
+USER 65532:65532
+
+ENTRYPOINT ["/incident-engine"]

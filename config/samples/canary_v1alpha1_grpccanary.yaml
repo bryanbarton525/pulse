@@ -1,0 +1,16 @@
+apiVersion: canary.iambarton.com/v1alpha1
+kind: GrpcCanary
+metadata:
+  labels:
+    app.kubernetes.io/name: pulse
+    app.kubernetes.io/managed-by: kustomize
+  name: grpccanary-sample
+spec:
+  # host:port of a server implementing grpc.health.v1.Health.
+  url: grpc-health-sample.default.svc:50051
+  # Optional: the service name passed to the health check.
+  # Empty means "the server as a whole".
+  service: ""
+  interval: 30
+  outputs:
+    - type: prometheus

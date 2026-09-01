@@ -6,13 +6,17 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	"github.com/bryanbarton525/pulse/internal/embed"
 	"github.com/bryanbarton525/pulse/internal/proberunner"
 )
 
@@ -20,11 +24,23 @@ func main() {
 	var configPath string
 	var authFilePath string
 	var listenAddr string
+	var incidentEngineURL string
+	var hotModelPath string
+	var hotVocabPath string
+	var embedCacheSize int
 	flag.StringVar(&configPath, "config", "/etc/pulse/probes.yaml",
 		"Path to the probe config file (mounted from ConfigMap).")
 	flag.StringVar(&authFilePath, "auth-file", "/etc/pulse-auth/auth.yaml",
 		"Path to the auth file (mounted from Secret).")
 	flag.StringVar(&listenAddr, "listen", ":9090", "Address to serve /metrics and /results on.")
+	flag.StringVar(&incidentEngineURL, "incident-engine", "",
+		"Base URL of the incident engine. Empty disables correlation and action dispatch.")
+	flag.StringVar(&hotModelPath, "hot-model", proberunner.DefaultHotModelPath,
+		"Path to the static embedding model used for body-drift scoring.")
+	flag.StringVar(&hotVocabPath, "hot-vocab", proberunner.DefaultHotVocabPath,
+		"Path to the vocabulary for the static embedding model.")
+	flag.IntVar(&embedCacheSize, "embed-cache-size", 4096,
+		"How many normalized response bodies to memoize. Most checks return an identical body every time.")
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -48,7 +64,18 @@ func main() {
 		logger.Error(err, "Failed to load probe auth store")
 		os.Exit(1)
 	}
-	logger.Info("Loaded probe config", "probeCount", len(config.Probes))
+	// ── Take this replica's share of the probes ──────────────
+	//
+	// Sharding is a stable hash of the probe name against the StatefulSet
+	// ordinal, so every replica reaches the same split from the same ConfigMap
+	// with no coordination. A single replica owns everything, which is the
+	// default and reproduces the original behavior exactly.
+	ordinal, shards := proberunner.ShardFromEnvironment()
+	shardName := strconv.Itoa(ordinal)
+	config = proberunner.Shard(config, ordinal, shards)
+
+	logger.Info("Loaded probe config",
+		"probeCount", len(config.Probes), "shard", ordinal, "shards", shards)
 
 	// ── Set up Prometheus registry ───────────────────────────
 	//
@@ -65,6 +92,30 @@ func main() {
 	defer cancel()
 
 	runner := proberunner.NewRunner(logger, registry, *authStore)
+
+	// ── Attach the model-driven evaluator ────────────────────
+	//
+	// Built only when some probe actually opted in, so a cluster with no
+	// AnomalyPolicy never loads a model and behaves exactly as it did before
+	// this feature existed.
+	var shipper *proberunner.HTTPShipper
+	if incidentEngineURL != "" && anyProbeWantsIntelligence(config.Probes) {
+		shipper = proberunner.NewHTTPShipper(proberunner.ShipperOptions{
+			Endpoint: strings.TrimRight(incidentEngineURL, "/") + "/observations",
+			Shard:    shardName,
+			Logger:   logger,
+		})
+
+		embedder := buildHotEmbedder(config.Probes, hotModelPath, hotVocabPath, embedCacheSize, logger)
+		runner.SetIntelligence(proberunner.NewIntelligence(
+			embedder, shipper, logger, proberunner.NewIntelligenceMetrics(registry)))
+
+		go proberunner.NewResultPusher(
+			strings.TrimRight(incidentEngineURL, "/")+"/results",
+			shardName, runner, logger, 5*time.Second,
+		).Run(ctx)
+	}
+
 	runner.Start(ctx, config)
 
 	// ── Start HTTP server ────────────────────────────────────
@@ -105,7 +156,16 @@ func main() {
 	sig := <-sigCh
 	logger.Info("Received shutdown signal", "signal", sig)
 
-	runner.Stop()
+	// Stop blocks until in-flight checks finish, so the shipper is still alive
+	// for anything they report on the way out.
+	drained := runner.Stop()
+	if !drained {
+		logger.Info("Some probes were still running at shutdown; " +
+			"stopping the observation shipper anyway")
+	}
+	if shipper != nil {
+		shipper.Stop()
+	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
@@ -173,9 +233,66 @@ func watchConfigReload(ctx context.Context, configPath string, authFilePath stri
 					continue
 				}
 
+				ordinal, shards := proberunner.ShardFromEnvironment()
+				newConfig = proberunner.Shard(newConfig, ordinal, shards)
+
 				runner.Reload(ctx, newConfig, *newAuthStore)
-				logger.Info("Config reloaded", "probeCount", len(newConfig.Probes))
+				logger.Info("Config reloaded", "probeCount", len(newConfig.Probes), "shard", ordinal)
 			}
 		}
 	}
+}
+
+// anyProbeWantsIntelligence reports whether this shard has any opted-in canary.
+func anyProbeWantsIntelligence(probes []proberunner.Probe) bool {
+	for _, probe := range probes {
+		if probe.Intelligence != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// buildHotEmbedder loads the static model used for body-drift scoring.
+//
+// This runs on EVERY passing check, so it must be nearly free: static
+// Model2Vec embeddings are a token lookup and a mean, with no transformer
+// forward pass and no cgo. A cache in front of it absorbs the common case
+// where an endpoint returns an identical body every time.
+//
+// A nil return disables drift while leaving latency and failure reporting
+// working — degrading one trigger beats failing to start.
+func buildHotEmbedder(
+	probes []proberunner.Probe,
+	modelPath, vocabPath string,
+	cacheSize int,
+	logger logr.Logger,
+) embed.Embedder {
+	wanted := false
+	for _, probe := range probes {
+		if probe.Intelligence != nil && probe.Intelligence.Triggers.BodyDrift != nil {
+			wanted = true
+			if probe.Intelligence.Model.Hot.ModelPath != "" {
+				modelPath = probe.Intelligence.Model.Hot.ModelPath
+			}
+			if probe.Intelligence.Model.Hot.VocabPath != "" {
+				vocabPath = probe.Intelligence.Model.Hot.VocabPath
+			}
+			break
+		}
+	}
+
+	if !wanted {
+		return nil
+	}
+
+	embedder, err := embed.LoadPotion(modelPath, vocabPath, 0)
+	if err != nil {
+		logger.Error(err, "Could not load the body-drift model; drift scoring is disabled",
+			"model", modelPath)
+		return nil
+	}
+
+	logger.Info("Loaded the body-drift model", "model", modelPath, "dimensions", embedder.Dimensions())
+	return embed.NewCachingEmbedder(embedder, cacheSize)
 }
