@@ -37,6 +37,13 @@ type Intelligence struct {
 	reportedHits   uint64
 	reportedMisses uint64
 
+	// signalling records which probes are currently drifting or running slow.
+	//
+	// Drift and latency fire on checks that PASS, so they never produce a
+	// failure the engine can watch recover. Without tracking the transition
+	// here, the incident they open would stay open forever.
+	signalling map[string]string
+
 	embedder embed.Embedder
 	drift    *anomaly.DriftDetector
 	latency  *anomaly.LatencyDetector
@@ -103,6 +110,7 @@ func NewIntelligence(
 	return &Intelligence{
 		normalizers: map[string]*anomaly.Normalizer{},
 		sampleCount: map[string]int{},
+		signalling:  map[string]string{},
 		embedder:    embedder,
 		drift:       anomaly.NewDriftDetector(),
 		latency:     anomaly.NewLatencyDetector(),
@@ -218,8 +226,13 @@ func (i *Intelligence) evaluateDrift(probe Probe, result *ProbeResult) {
 	}
 
 	if !outcome.Drifted {
+		i.clearSignal(probe.Name, observation.KindBodyDrift, result.LastCheckTime)
 		return
 	}
+
+	// Repeat signals are cheap and let the engine refresh the incident, but the
+	// engine deduplicates them onto one open incident per probe.
+	i.markSignal(probe.Name, observation.KindBodyDrift)
 
 	i.ship(probe.Name, observation.Observation{
 		Probe:      probe.Name,
@@ -253,8 +266,11 @@ func (i *Intelligence) evaluateLatency(probe Probe, result *ProbeResult, duratio
 	}
 
 	if !outcome.Shifted {
+		i.clearSignal(probe.Name, observation.KindLatencyShift, result.LastCheckTime)
 		return
 	}
+
+	i.markSignal(probe.Name, observation.KindLatencyShift)
 
 	i.ship(probe.Name, observation.Observation{
 		Probe:         probe.Name,
@@ -266,6 +282,40 @@ func (i *Intelligence) evaluateLatency(probe Probe, result *ProbeResult, duratio
 		Message:       "Check is passing but materially slower than its rolling baseline.",
 		LatencyZScore: outcome.ZScore,
 		At:            result.LastCheckTime,
+	})
+}
+
+// markSignal records that a probe is currently drifting or running slow.
+func (i *Intelligence) markSignal(probe, kind string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.signalling[probe] = kind
+}
+
+// clearSignal reports the END of a drift or latency episode, once.
+//
+// The engine closes an incident when a probe recovers. A failing probe supplies
+// that naturally; a drifting one never does, because it was passing throughout.
+// This supplies the missing edge, so a body that returns to normal closes its
+// incident instead of leaving it open indefinitely.
+func (i *Intelligence) clearSignal(probe, kind string, at time.Time) {
+	i.mu.Lock()
+	active, found := i.signalling[probe]
+	if found && active == kind {
+		delete(i.signalling, probe)
+	} else {
+		found = false
+	}
+	i.mu.Unlock()
+
+	if !found {
+		return
+	}
+
+	i.ship(probe, observation.Observation{
+		Probe: probe,
+		Kind:  observation.KindRecovery,
+		At:    at,
 	})
 }
 
@@ -339,6 +389,11 @@ func (i *Intelligence) Retain(keep map[string]struct{}) {
 	for probe := range i.sampleCount {
 		if _, found := keep[probe]; !found {
 			delete(i.sampleCount, probe)
+		}
+	}
+	for probe := range i.signalling {
+		if _, found := keep[probe]; !found {
+			delete(i.signalling, probe)
 		}
 	}
 }

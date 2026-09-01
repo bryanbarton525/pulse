@@ -116,11 +116,11 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary.
-	go build -o bin/manager cmd/main.go
+	go build -o bin/manager ./cmd
 
 .PHONY: build-incidentengine
 build-incidentengine: manifests generate fmt vet ## Build incident engine binary (no ONNX; add TAGS=onnx for the real model).
-	go build $(if $(TAGS),-tags $(TAGS),) -o bin/incident-engine cmd/incidentengine/main.go
+	go build $(if $(TAGS),-tags $(TAGS),) -o bin/incident-engine ./cmd/incidentengine
 
 .PHONY: fetch-models
 fetch-models: ## Download and convert the embedding models baked into the images.
@@ -128,18 +128,18 @@ fetch-models: ## Download and convert the embedding models baked into the images
 
 .PHONY: build-proberunner
 build-proberunner: manifests generate fmt vet ## Build probe runner binary.
-	go build -o bin/probe-runner cmd/proberunner/main.go
+	go build -o bin/probe-runner ./cmd/proberunner
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
 	PULSE_PROBE_RUNNER_IMAGE="$${PULSE_PROBE_RUNNER_IMAGE:-$(PROBE_RUNNER_IMAGE)}" \
 	PULSE_PROBE_RUNNER_IMAGE_PULL_SECRETS="$${PULSE_PROBE_RUNNER_IMAGE_PULL_SECRETS:-$(PROBE_RUNNER_IMAGE_PULL_SECRETS)}" \
 	PULSE_PROBE_RUNNER_RESULTS_URL="$${PULSE_PROBE_RUNNER_RESULTS_URL:-$(PROBE_RUNNER_RESULTS_URL)}" \
-	go run ./cmd/main.go
+	go run ./cmd
 
 .PHONY: run-proberunner
 run-proberunner: manifests generate fmt vet ## Run the probe runner from your host.
-	go run ./cmd/proberunner/main.go
+	go run ./cmd/proberunner
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
@@ -240,7 +240,8 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -
 	"$(KUBECTL)" -n pulse-system set env deployment/pulse-controller-manager \
-		PULSE_PROBE_RUNNER_IMAGE="$${PULSE_PROBE_RUNNER_IMAGE:-$(PROBE_RUNNER_IMAGE)}"
+		PULSE_PROBE_RUNNER_IMAGE="$${PULSE_PROBE_RUNNER_IMAGE:-$(PROBE_RUNNER_IMAGE)}" \
+		PULSE_INCIDENT_ENGINE_IMAGE="$${PULSE_INCIDENT_ENGINE_IMAGE:-$(INCIDENT_ENGINE_IMAGE)}"
 	@pull_secrets="$${PULSE_PROBE_RUNNER_IMAGE_PULL_SECRETS:-$(PROBE_RUNNER_IMAGE_PULL_SECRETS)}"; \
 	if [ -n "$$pull_secrets" ]; then \
 		"$(KUBECTL)" -n pulse-system set env deployment/pulse-controller-manager \

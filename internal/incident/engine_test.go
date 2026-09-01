@@ -304,6 +304,75 @@ func TestEngineTreatsDriftAsSingleProbeIncident(t *testing.T) {
 	if len(incident.Members) != 1 || incident.RootCause != "default/api" {
 		t.Fatalf("drift incident = %+v, want a single self-caused member", incident)
 	}
+
+	// Dispatching is not enough. An incident that is not REGISTERED never
+	// appears in /incidents, so it never reaches the canary's status and an
+	// operator sees a drift metric moving with nothing to explain it. This
+	// assertion is the one that was missing when exactly that shipped.
+	open := engine.Open()
+	if len(open) != 1 {
+		t.Fatalf("open incidents = %d, want the drift incident to be registered", len(open))
+	}
+	if open[0].Trigger != TriggerBodyDrift || open[0].RootCause != "default/api" {
+		t.Fatalf("registered incident = %+v, want the drift incident", open[0])
+	}
+}
+
+// A probe that keeps drifting reports on every check. Those must fold into one
+// open incident, not produce a fresh incident per interval.
+func TestEngineDeduplicatesRepeatedDriftIntoOneIncident(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1000, 0)
+	engine, dispatcher := newTestEngine(t, nil,
+		[]proberunner.Probe{probeWithCorrelation("default/api", "pulse-system/app", nil)})
+
+	for index := range 10 {
+		engine.Ingest(context.Background(), observation.Observation{
+			Probe: "default/api", Kind: observation.KindBodyDrift,
+			DriftScore: 0.62, At: now.Add(time.Duration(index) * time.Second),
+		})
+	}
+	waitForIncidents(t, dispatcher, 10)
+
+	open := engine.Open()
+	if len(open) != 1 {
+		t.Fatalf("open incidents = %d after 10 drift reports, want 1", len(open))
+	}
+
+	first := open[0].ID
+	if open[0].UpdatedAt.Equal(open[0].OpenedAt) {
+		t.Fatal("the incident was never refreshed by the later reports")
+	}
+	_ = first
+}
+
+// Drift fires while the check PASSES, so there is no failure to recover from.
+// The runner sends an explicit recovery when drift stops; without it the
+// incident would stay open forever.
+func TestEngineClosesDriftIncidentWhenDriftStops(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1000, 0)
+	engine, dispatcher := newTestEngine(t, nil,
+		[]proberunner.Probe{probeWithCorrelation("default/api", "pulse-system/app", nil)})
+
+	engine.Ingest(context.Background(), observation.Observation{
+		Probe: "default/api", Kind: observation.KindBodyDrift, DriftScore: 0.62, At: now,
+	})
+	waitForIncidents(t, dispatcher, 1)
+
+	if got := len(engine.Open()); got != 1 {
+		t.Fatalf("open incidents = %d, want 1", got)
+	}
+
+	engine.Ingest(context.Background(), observation.Observation{
+		Probe: "default/api", Kind: observation.KindRecovery, At: now.Add(time.Minute),
+	})
+
+	if got := len(engine.Open()); got != 0 {
+		t.Fatalf("open incidents = %d after drift stopped, want 0", got)
+	}
 }
 
 // A probe that never opted in must be ignored entirely.

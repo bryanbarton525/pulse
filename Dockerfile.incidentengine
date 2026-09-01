@@ -6,6 +6,12 @@
 FROM golang:1.26 AS builder
 ARG TARGETOS
 ARG TARGETARCH
+# MUST match the C API version vendored by onnxruntime_go, which is checked at
+# runtime: the wrapper asks for ORT_API_VERSION (29, see its
+# onnxruntime_c_api.h) and a shared library that implements a different API
+# refuses with "Error setting ORT API base". That failure is graceful -- the
+# engine logs it and falls back to declared topology -- so it is easy to miss.
+# When bumping onnxruntime_go, re-check its ORT_API_VERSION and move this with it.
 ARG ONNXRUNTIME_VERSION=1.22.0
 
 WORKDIR /workspace
@@ -34,7 +40,7 @@ COPY . .
 # The onnx build tag is what pulls in the cgo backend. Without it the binary
 # compiles fine and reports that the backend is unavailable.
 RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
-    go build -tags onnx -o incident-engine cmd/incidentengine/main.go
+    go build -tags onnx -o incident-engine ./cmd/incidentengine
 
 # distroless/cc rather than distroless/static: ONNX Runtime needs glibc for
 # dlopen and libstdc++ for its own symbols. distroless/static has neither.

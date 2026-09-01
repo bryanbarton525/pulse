@@ -224,6 +224,10 @@ func (e *Engine) handleFailure(ctx context.Context, signal observation.Observati
 // handleSingleProbeSignal covers drift and latency, which concern one probe by
 // construction: a body that changed meaning is a statement about that endpoint
 // alone, and there is nothing to correlate it with.
+//
+// Unlike a failure, these signals have no natural end -- the check was passing
+// the whole time -- so the incident stays open until the runner reports that
+// the probe stopped drifting, which arrives as a recovery.
 func (e *Engine) handleSingleProbeSignal(ctx context.Context, signal observation.Observation) {
 	probe, found := e.probe(signal.Probe)
 	if !found || probe.Intelligence == nil {
@@ -237,6 +241,18 @@ func (e *Engine) handleSingleProbeSignal(ctx context.Context, signal observation
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	// Reuse the probe's existing incident when it is already drifting.
+	//
+	// The runner reports a drift signal on every check that stays drifted, so
+	// creating a new incident each time would churn out one per interval --
+	// each with its own ID, none of them ever closing.
+	if existing := e.openForProbeLocked(signal.Probe); existing != nil && existing.Trigger == trigger {
+		existing.Members[0].Signal = signal
+		existing.UpdatedAt = signal.At
+		e.dispatchLocked(ctx, existing)
+		return
+	}
 
 	e.counter++
 	current := &Incident{
@@ -254,7 +270,22 @@ func (e *Engine) handleSingleProbeSignal(ctx context.Context, signal observation
 	}
 	current.Signature = computeSignature(trigger, signal.Probe, "", []string{signal.Probe})
 
+	// Registering matters as much as dispatching. An unregistered incident is
+	// invisible to /incidents, so it never reaches the canary's status and an
+	// operator sees a drift metric moving with nothing to explain it.
+	e.open[current.ID] = current
+	e.byProbe[signal.Probe] = current.ID
+
 	e.dispatchLocked(ctx, current)
+}
+
+// openForProbeLocked returns the incident a probe currently belongs to.
+func (e *Engine) openForProbeLocked(probe string) *Incident {
+	incidentID, found := e.byProbe[probe]
+	if !found {
+		return nil
+	}
+	return e.open[incidentID]
 }
 
 // relatedFailures finds recent failures that share evidence with this one.
