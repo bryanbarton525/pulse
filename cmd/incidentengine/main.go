@@ -136,6 +136,7 @@ func main() {
 	// a function taking both forces callers to reason about which one wins.
 	go watchConfigReload(logr.NewContext(ctx, logger), configPath, authFilePath,
 		engine, dispatcher, aggregator, models)
+	go sweepStaleIncidents(logr.NewContext(ctx, logger), engine)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -301,6 +302,32 @@ func watchConfigReload(
 			}
 
 			applyConfig(engine, dispatcher, aggregator, models, newConfig, *newAuth, logger)
+		}
+	}
+}
+
+// staleIncidentIdle is how long a drift or latency incident may go without a
+// refresh before the engine closes it. Generous next to any sane probe
+// interval, so a slow probe is never closed out from under itself.
+const staleIncidentIdle = 5 * time.Minute
+
+// sweepStaleIncidents closes single-probe incidents the runner stopped
+// refreshing, which is what happens to every open drift incident when a probe
+// runner restarts or the shards are rebalanced.
+func sweepStaleIncidents(ctx context.Context, engine *incident.Engine) {
+	logger := logr.FromContextOrDiscard(ctx)
+
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if closed := engine.Sweep(staleIncidentIdle); closed > 0 {
+				logger.Info("Closed stale single-probe incidents", "count", closed)
+			}
 		}
 	}
 }

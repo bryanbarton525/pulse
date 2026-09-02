@@ -40,14 +40,27 @@ func (s *stubEmbedder) Embed(_ context.Context, texts []string) ([]embed.Vector,
 
 // recordingDispatcher captures dispatched incidents instead of calling out.
 type recordingDispatcher struct {
-	mu        sync.Mutex
-	incidents []*Incident
+	mu         sync.Mutex
+	incidents  []*Incident
+	onDispatch func(*Incident)
 }
 
-func (r *recordingDispatcher) Dispatch(_ context.Context, incident *Incident) {
+func (r *recordingDispatcher) Dispatch(ctx context.Context, incident *Incident) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Record whether the context was already dead on arrival — a real action
+	// would fail immediately with exactly this error.
+	incident.dispatchErr = ctx.Err()
+	if r.onDispatch != nil {
+		r.onDispatch(incident)
+	}
 	r.incidents = append(r.incidents, incident)
+}
+
+func (r *recordingDispatcher) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.incidents)
 }
 
 func (r *recordingDispatcher) last() *Incident {
@@ -90,6 +103,8 @@ func newTestEngine(t *testing.T, vectors map[string][]float32, probes []proberun
 		Dispatcher: dispatcher,
 		Logger:     logr.Discard(),
 		Now:        func() time.Time { return time.Unix(0, 0) },
+		// Short, but still exercising the debounce rather than bypassing it.
+		DispatchDelay: 40 * time.Millisecond,
 	})
 	engine.LoadProbes(probes)
 
@@ -170,7 +185,7 @@ func TestEngineMergesIdenticalFailuresIntoOneIncident(t *testing.T) {
 		engine.Ingest(context.Background(),
 			failure(probe, "upstream refused", now.Add(time.Duration(index)*time.Second)))
 	}
-	waitForIncidents(t, dispatcher, 3)
+	waitForIncidents(t, dispatcher, 1) // three probes, one incident
 
 	open := engine.Open()
 	if len(open) != 1 {
@@ -203,7 +218,7 @@ func TestEngineNamesRootCauseFromDeclaredTopology(t *testing.T) {
 	// The API is noticed first, but the database is to blame.
 	engine.Ingest(context.Background(), failure("default/payments", "api 500", now))
 	engine.Ingest(context.Background(), failure(probeDatabase, "connection refused", now.Add(time.Second)))
-	waitForIncidents(t, dispatcher, 2)
+	waitForIncidents(t, dispatcher, 1) // two probes, one incident
 
 	open := engine.Open()
 	if len(open) != 1 {
@@ -245,7 +260,7 @@ func TestEngineCorrelatesAcrossPolicyBoundaries(t *testing.T) {
 
 	engine.Ingest(context.Background(), failure("default/payments", "same wall", now))
 	engine.Ingest(context.Background(), failure(probeDatabase, "same wall", now.Add(time.Second)))
-	waitForIncidents(t, dispatcher, 2)
+	waitForIncidents(t, dispatcher, 1) // two probes, one incident
 
 	if open := engine.Open(); len(open) != 1 {
 		t.Fatalf("open incidents = %d, want 1 spanning two policies", len(open))
@@ -266,7 +281,7 @@ func TestEngineClosesIncidentOnRecovery(t *testing.T) {
 
 	engine.Ingest(context.Background(), failure("default/payments", "upstream refused", now))
 	engine.Ingest(context.Background(), failure("default/orders", "upstream refused", now.Add(time.Second)))
-	waitForIncidents(t, dispatcher, 2)
+	waitForIncidents(t, dispatcher, 1) // two probes, one incident
 
 	if got := len(engine.Open()); got != 1 {
 		t.Fatalf("open incidents = %d, want 1", got)
@@ -336,7 +351,7 @@ func TestEngineDeduplicatesRepeatedDriftIntoOneIncident(t *testing.T) {
 			DriftScore: 0.62, At: now.Add(time.Duration(index) * time.Second),
 		})
 	}
-	waitForIncidents(t, dispatcher, 10)
+	waitForIncidents(t, dispatcher, 1) // ten drift reports, one incident
 
 	open := engine.Open()
 	if len(open) != 1 {
@@ -420,5 +435,200 @@ func TestEngineMarksRepeatFailureShapesAsNotNovel(t *testing.T) {
 
 	if second := dispatcher.last(); second.Novel {
 		t.Fatal("a repeat of a known failure shape was marked novel")
+	}
+}
+
+// Observations arrive over HTTP, so Ingest receives a request context that is
+// cancelled the moment the handler returns. Dispatch happens in a goroutine
+// afterwards, so a context that carries cancellation kills every action before
+// it can reach Slack, a language model, or a log backend.
+//
+// This shipped: in a real cluster not one action request ever left the engine.
+// The unit tests missed it because they called Dispatch with context.Background
+// directly, never through Ingest.
+func TestDispatchSurvivesACancelledIngestContext(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1000, 0)
+	engine, dispatched := newTestEngine(t,
+		map[string][]float32{"upstream refused": {1, 0, 0}},
+		[]proberunner.Probe{probeWithCorrelation("default/api", "pulse-system/app", nil)})
+
+	// Exactly what the HTTP handler hands over: a context already cancelled
+	// by the time the dispatch goroutine runs.
+	ctx, cancel := context.WithCancel(context.Background())
+	engine.Ingest(ctx, failure("default/api", "upstream refused", now))
+	cancel()
+
+	waitForIncidents(t, dispatched, 1)
+
+	current := dispatched.last()
+	if current == nil {
+		t.Fatal("no incident dispatched")
+		return
+	}
+	if err := current.dispatchErr; err != nil {
+		t.Fatalf("dispatch saw a cancelled context: %v", err)
+	}
+}
+
+// A correlated incident gains members one observation at a time, and the root
+// cause is often the LAST to report. Dispatching on each arrival sent one
+// notification per member, and the first named whoever reported first as the
+// root cause — in a real cluster that was three Slack messages for one outage,
+// the first blaming the wrong service. The whole point of correlating is to
+// produce one page.
+func TestGrowingIncidentDispatchesOnceWithTheFinalRootCause(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1000, 0)
+	engine, dispatched := newTestEngine(t,
+		map[string][]float32{"upstream refused": {1, 0, 0}},
+		[]proberunner.Probe{
+			// The API depends on the database, so once both are failing the
+			// database is the root cause — but it reports last.
+			probeWithCorrelation("default/api", "pulse-system/app",
+				[]proberunner.ProbeDependency{
+					{Canary: "default/api", Upstream: []string{probeDatabase}},
+				}),
+			probeWithCorrelation(probeDatabase, "pulse-system/platform", nil),
+		})
+
+	engine.Ingest(context.Background(), failure("default/api", "upstream refused", now))
+	engine.Ingest(context.Background(),
+		failure(probeDatabase, "upstream refused", now.Add(time.Second)))
+
+	waitForIncidents(t, dispatched, 1)
+	time.Sleep(120 * time.Millisecond) // let any extra dispatch land
+
+	if got := dispatched.count(); got != 1 {
+		t.Fatalf("dispatched %d times for one incident, want 1", got)
+	}
+
+	current := dispatched.last()
+	if current.RootCause != probeDatabase {
+		t.Fatalf("RootCause = %q, want %q — dispatch fired before the incident settled",
+			current.RootCause, probeDatabase)
+	}
+	if len(current.Members) != 2 {
+		t.Fatalf("members = %d, want 2", len(current.Members))
+	}
+}
+
+// The llm action writes its analysis onto the incident it is handed. That is a
+// snapshot, so without an explicit write-back the engine never learns it, it
+// never appears on /incidents, and the operator never sees it on the CR.
+func TestInvestigationIsCarriedBackOntoTheIncident(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1000, 0)
+	engine, dispatched := newTestEngine(t,
+		map[string][]float32{"boom": {1, 0, 0}},
+		[]proberunner.Probe{probeWithCorrelation("default/api", "pulse-system/app", nil)})
+
+	// Stand in for the llm action populating the analysis.
+	dispatched.onDispatch = func(current *Incident) {
+		current.Investigation = "**Assessment** — the upstream is refusing connections."
+	}
+
+	engine.Ingest(context.Background(), failure("default/api", "boom", now))
+	waitForIncidents(t, dispatched, 1)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		open := engine.Open()
+		if len(open) == 1 && open[0].Investigation != "" {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatal("the investigation never reached the engine's incident, so it cannot reach CR status")
+}
+
+// A probe must never hold more than one open incident.
+//
+// byProbe maps a probe to a single incident, so when a probe that is already
+// latency-shifted starts drifting, opening a second incident orphans the
+// first: it stays in e.open, is never looked up again, and never closes. In a
+// cluster this showed up as fourteen open incidents for five canaries.
+func TestProbeHoldsAtMostOneOpenIncident(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1000, 0)
+	engine, _ := newTestEngine(t, nil,
+		[]proberunner.Probe{probeWithCorrelation("default/api", "pulse-system/app", nil)})
+
+	for index := range 6 {
+		kind := observation.KindBodyDrift
+		if index%2 == 1 {
+			kind = observation.KindLatencyShift
+		}
+		engine.Ingest(context.Background(), observation.Observation{
+			Probe: "default/api", Kind: kind,
+			DriftScore: 0.4, LatencyZScore: 4,
+			At: now.Add(time.Duration(index) * time.Second),
+		})
+	}
+
+	if got := len(engine.Open()); got != 1 {
+		t.Fatalf("open incidents = %d after alternating drift and latency signals, want 1", got)
+	}
+}
+
+// The runner closes a drift incident by reporting that the episode ended, but
+// it tracks that in memory. A restart or a resharding loses it, and the
+// incident is then stranded with nobody left to close it. The sweep is what
+// makes the engine self-healing across the rollouts that cause this.
+func TestSweepClosesStaleSingleProbeIncidents(t *testing.T) {
+	t.Parallel()
+
+	clock := time.Unix(1000, 0)
+	dispatched := &recordingDispatcher{}
+	engine := NewEngine(EngineOptions{
+		Dispatcher:    dispatched,
+		Logger:        logr.Discard(),
+		Now:           func() time.Time { return clock },
+		DispatchDelay: 20 * time.Millisecond,
+	})
+	engine.LoadProbes([]proberunner.Probe{
+		probeWithCorrelation("default/api", "pulse-system/app", nil),
+		probeWithCorrelation("default/other", "pulse-system/app", nil),
+	})
+
+	engine.Ingest(context.Background(), observation.Observation{
+		Probe: "default/api", Kind: observation.KindBodyDrift, DriftScore: 0.4, At: clock,
+	})
+	// A correlation incident, which must survive the sweep: a long outage is
+	// still a real outage.
+	engine.Ingest(context.Background(), failure("default/other", "boom", clock))
+
+	if got := len(engine.Open()); got != 2 {
+		t.Fatalf("open incidents = %d, want 2", got)
+	}
+
+	// Nothing refreshes them; the runner that would have cleared the drift is
+	// gone.
+	clock = clock.Add(30 * time.Minute)
+	if closed := engine.Sweep(5 * time.Minute); closed != 1 {
+		t.Fatalf("Sweep closed %d incidents, want 1", closed)
+	}
+
+	open := engine.Open()
+	if len(open) != 1 {
+		t.Fatalf("open incidents = %d after the sweep, want 1", len(open))
+	}
+	if open[0].Trigger != TriggerFailureCorrelation {
+		t.Fatalf("the sweep closed the %s incident; only single-probe ones should expire",
+			open[0].Trigger)
+	}
+
+	// The probe must be released, or it can never open another incident.
+	engine.Ingest(context.Background(), observation.Observation{
+		Probe: "default/api", Kind: observation.KindBodyDrift, DriftScore: 0.4,
+		At: clock.Add(time.Second),
+	})
+	if got := len(engine.Open()); got != 2 {
+		t.Fatalf("open incidents = %d; the swept probe could not open a new incident", got)
 	}
 }

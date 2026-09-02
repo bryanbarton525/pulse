@@ -102,6 +102,8 @@ func newPipeline(t *testing.T, probes []proberunner.Probe) *pipeline {
 		Embedder:   embedder,
 		Dispatcher: dispatched,
 		Logger:     logr.Discard(),
+		// Exercise the debounce without waiting its production default.
+		DispatchDelay: 40 * time.Millisecond,
 	})
 	engine.LoadProbes(probes)
 
@@ -203,7 +205,7 @@ func TestCorrelatedOutageProducesOneIncident(t *testing.T) {
 		failing("data/postgres", "connection refused", 0, now.Add(2*time.Second)),
 		nil, time.Second)
 
-	settle(t, line.dispatched, 3)
+	settle(t, line.dispatched, 1) // three probes, one incident
 
 	open := line.engine.Open()
 	if len(open) != 1 {
@@ -290,7 +292,7 @@ func TestUndeclaredSharedUpstreamMergesOnFailureText(t *testing.T) {
 			now.Add(time.Second)),
 		nil, 2*time.Second)
 
-	settle(t, line.dispatched, 2)
+	settle(t, line.dispatched, 1) // two probes, one incident
 
 	open := line.engine.Open()
 	if len(open) != 1 {
@@ -397,7 +399,7 @@ func TestRecoveryClosesTheIncident(t *testing.T) {
 	line.intelligence.Evaluate(probes[0], down[0], nil, 2*time.Second)
 	line.intelligence.Evaluate(probes[1], down[1], nil, 2*time.Second)
 
-	settle(t, line.dispatched, 2)
+	settle(t, line.dispatched, 1) // two probes, one incident
 	if got := len(line.engine.Open()); got != 1 {
 		t.Fatalf("open incidents = %d, want 1", got)
 	}

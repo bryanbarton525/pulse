@@ -79,6 +79,15 @@ func TestGeneratedClusterRoleCoversEveryOperation(t *testing.T) {
 			why:      "the status syncer records incident Events",
 		},
 		{
+			// The recorder uses the events.k8s.io API, not the core one.
+			// Granting only core/events lets the manager start, emit, and have
+			// every single Event rejected by the API server with a Forbidden
+			// that only shows up in its logs.
+			resource: "events.k8s.io/events",
+			verbs:    []string{"create", "patch"},
+			why:      "mgr.GetEventRecorder writes to the events.k8s.io group",
+		},
+		{
 			resource: "canary.iambarton.com/anomalypolicies",
 			verbs:    []string{"get", "list", "watch"},
 			why:      "policies are listed every reconcile",

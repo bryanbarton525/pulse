@@ -66,6 +66,10 @@ type Incident struct {
 	// the llm action if the policy declares one.
 	Investigation string `json:"investigation,omitempty"`
 
+	// dispatchErr records the state of the context the dispatcher was handed,
+	// so tests can assert actions are not born cancelled.
+	dispatchErr error
+
 	// DownstreamFor names the probe this notice is about when the incident is
 	// being reported to the owner of a VICTIM rather than of the root cause.
 	// Suppressing victims is the whole point of correlating, but a team whose

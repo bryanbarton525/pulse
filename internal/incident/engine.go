@@ -53,6 +53,13 @@ type Engine struct {
 
 	// now is injectable so tests can drive time deterministically.
 	now func() time.Time
+
+	// pending holds the debounce timer for each incident awaiting dispatch.
+	pending map[string]*time.Timer
+
+	// dispatchDelay is how long an incident may keep growing before its
+	// actions fire.
+	dispatchDelay time.Duration
 }
 
 // EngineOptions configures a new Engine.
@@ -65,6 +72,10 @@ type EngineOptions struct {
 
 	WindowCapacity int
 	MaxClusters    int
+
+	// DispatchDelay collapses an incident's growth into a single notification.
+	// Defaults to 5s; tests set it low.
+	DispatchDelay time.Duration
 }
 
 // NewEngine builds an engine with no probes loaded yet.
@@ -78,19 +89,26 @@ func NewEngine(options EngineOptions) *Engine {
 		parse = func(string) (Selector, error) { return nil, nil }
 	}
 
+	delay := options.DispatchDelay
+	if delay <= 0 {
+		delay = 5 * time.Second
+	}
+
 	return &Engine{
-		open:       map[string]*Incident{},
-		byProbe:    map[string]string{},
-		window:     NewWindow(options.WindowCapacity),
-		graph:      NewGraph(),
-		novelty:    NewNoveltyIndex(now(), options.MaxClusters),
-		inference:  NewInference(),
-		probes:     map[string]proberunner.Probe{},
-		embedder:   options.Embedder,
-		dispatcher: options.Dispatcher,
-		parse:      parse,
-		logger:     options.Logger,
-		now:        now,
+		open:          map[string]*Incident{},
+		pending:       map[string]*time.Timer{},
+		dispatchDelay: delay,
+		byProbe:       map[string]string{},
+		window:        NewWindow(options.WindowCapacity),
+		graph:         NewGraph(),
+		novelty:       NewNoveltyIndex(now(), options.MaxClusters),
+		inference:     NewInference(),
+		probes:        map[string]proberunner.Probe{},
+		embedder:      options.Embedder,
+		dispatcher:    options.Dispatcher,
+		parse:         parse,
+		logger:        options.Logger,
+		now:           now,
 	}
 }
 
@@ -242,14 +260,19 @@ func (e *Engine) handleSingleProbeSignal(ctx context.Context, signal observation
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	// Reuse the probe's existing incident when it is already drifting.
+	// Reuse the probe's existing incident, whatever opened it.
 	//
-	// The runner reports a drift signal on every check that stays drifted, so
-	// creating a new incident each time would churn out one per interval --
-	// each with its own ID, none of them ever closing.
-	if existing := e.openForProbeLocked(signal.Probe); existing != nil && existing.Trigger == trigger {
+	// Two reasons. The runner reports a drift signal on every drifted check,
+	// so creating a new incident each time would churn out one per interval.
+	// And byProbe holds a single incident per probe, so letting a probe open a
+	// second one (drift while already latency-shifted, say) orphans the first:
+	// it stays in e.open, is never found again, and never closes.
+	if existing := e.openForProbeLocked(signal.Probe); existing != nil && len(existing.Members) == 1 {
+		existing.Trigger = trigger
 		existing.Members[0].Signal = signal
+		existing.Members[0].Role = RoleRootCause
 		existing.UpdatedAt = signal.At
+		existing.Signature = computeSignature(trigger, signal.Probe, "", []string{signal.Probe})
 		e.dispatchLocked(ctx, existing)
 		return
 	}
@@ -438,9 +461,55 @@ func (e *Engine) dispatchLocked(ctx context.Context, current *Incident) {
 		return
 	}
 
-	snapshot := *current
-	snapshot.Members = append([]Member(nil), current.Members...)
-	go e.dispatcher.Dispatch(ctx, &snapshot)
+	// Detach from the caller's cancellation.
+	//
+	// Observations arrive over HTTP, so ctx is the request context and the
+	// handler returns as soon as Ingest does. Anything dispatched afterwards
+	// on that context dies with "context canceled" before it can reach Slack,
+	// a language model, or a log backend. WithoutCancel keeps the values and
+	// drops the deadline; the dispatcher still applies its own per-action
+	// timeout, so this cannot run unbounded.
+	dispatchCtx := context.WithoutCancel(ctx)
+
+	// Debounce. A correlated incident gains members one observation at a
+	// time, and the root cause is frequently the LAST to report — an API
+	// notices the outage before the database check does. Firing on each
+	// arrival sends one notification per member and blames whoever reported
+	// first. Re-arming the timer lets the incident settle, so the actions run
+	// once, against the final member set and the correct root cause.
+	id := current.ID
+	if timer, found := e.pending[id]; found {
+		timer.Stop()
+	}
+
+	e.pending[id] = time.AfterFunc(e.dispatchDelay, func() {
+		e.mu.Lock()
+		delete(e.pending, id)
+		live, stillOpen := e.open[id]
+		if !stillOpen {
+			e.mu.Unlock()
+			return
+		}
+		snapshot := *live
+		snapshot.Members = append([]Member(nil), live.Members...)
+		e.mu.Unlock()
+
+		e.dispatcher.Dispatch(dispatchCtx, &snapshot)
+
+		// Carry back whatever the actions produced. The llm action writes its
+		// analysis onto the incident it was handed, which is this snapshot;
+		// without this the engine never learns it, /incidents does not carry
+		// it, and it never reaches the canary's status.
+		if snapshot.Investigation == "" {
+			return
+		}
+
+		e.mu.Lock()
+		if live, stillOpen := e.open[id]; stillOpen {
+			live.Investigation = snapshot.Investigation
+		}
+		e.mu.Unlock()
+	})
 }
 
 // correlationSettings returns a probe's flattened correlation configuration.
@@ -550,6 +619,50 @@ func (e *Engine) Proposals() []Proposal {
 	}
 
 	return e.inference.Proposals(minObservations, minConfidence)
+}
+
+// Sweep closes single-probe incidents that have stopped being refreshed.
+//
+// Drift and latency incidents are closed by a "cleared" signal from the probe
+// runner, which tracks in memory whether a probe is currently signalling. That
+// state does not survive a runner restart or a resharding, and both are
+// routine -- so without a sweep every rollout strands its open drift incidents
+// with nobody left to close them, and they accumulate for the life of the
+// engine.
+//
+// The runner re-reports a drift signal on every drifted check, so an incident
+// that has not been refreshed for several intervals is over. Correlation
+// incidents are left alone: those close when their members recover, and a
+// genuinely long outage should stay open.
+func (e *Engine) Sweep(idleFor time.Duration) int {
+	now := e.now()
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	closed := 0
+	for id, current := range e.open {
+		if current.Trigger != TriggerBodyDrift && current.Trigger != TriggerLatencyShift {
+			continue
+		}
+		if now.Sub(current.UpdatedAt) < idleFor {
+			continue
+		}
+
+		for _, member := range current.Members {
+			if e.byProbe[member.Probe] == id {
+				delete(e.byProbe, member.Probe)
+			}
+		}
+		if timer, found := e.pending[id]; found {
+			timer.Stop()
+			delete(e.pending, id)
+		}
+		delete(e.open, id)
+		closed++
+	}
+
+	return closed
 }
 
 // DeclaredEdges exposes the operator-declared dependency graph.
