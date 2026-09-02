@@ -2,6 +2,7 @@ package incident
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -630,5 +631,112 @@ func TestSweepClosesStaleSingleProbeIncidents(t *testing.T) {
 	})
 	if got := len(engine.Open()); got != 2 {
 		t.Fatalf("open incidents = %d; the swept probe could not open a new incident", got)
+	}
+}
+
+// A probe that is already drifting must still be able to join a correlated
+// incident when it starts failing outright.
+//
+// Reusing whatever incident the probe already held meant an outage fragmented
+// into one private drift incident per already-drifting probe, and only the
+// probes that happened not to be drifting correlated together.
+func TestFailureSupersedesAnOpenDriftIncident(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1000, 0)
+	engine, dispatched := newTestEngine(t,
+		map[string][]float32{"upstream refused": {1, 0, 0}},
+		[]proberunner.Probe{
+			probeWithCorrelation("default/api-a", "pulse-system/app", nil),
+			probeWithCorrelation("default/api-b", "pulse-system/app", nil),
+		})
+
+	// Both are drifting while still passing.
+	for _, probe := range []string{"default/api-a", "default/api-b"} {
+		engine.Ingest(context.Background(), observation.Observation{
+			Probe: probe, Kind: observation.KindBodyDrift, DriftScore: 0.4, At: now,
+		})
+	}
+	if got := len(engine.Open()); got != 2 {
+		t.Fatalf("open incidents = %d, want one drift incident per probe", got)
+	}
+
+	// Now the shared upstream dies and both fail with the same text.
+	engine.Ingest(context.Background(),
+		failure("default/api-a", "upstream refused", now.Add(time.Second)))
+	engine.Ingest(context.Background(),
+		failure("default/api-b", "upstream refused", now.Add(2*time.Second)))
+
+	waitForIncidents(t, dispatched, 1)
+
+	open := engine.Open()
+	if len(open) != 1 {
+		names := make([]string, 0, len(open))
+		for _, i := range open {
+			names = append(names, i.Trigger+":"+strings.Join(i.ProbeNames(), "+"))
+		}
+		t.Fatalf("open incidents = %d, want 1 correlated: %v", len(open), names)
+	}
+	if open[0].Trigger != TriggerFailureCorrelation {
+		t.Fatalf("Trigger = %q, want %q", open[0].Trigger, TriggerFailureCorrelation)
+	}
+	if len(open[0].Members) != 2 {
+		t.Fatalf("members = %d, want both probes", len(open[0].Members))
+	}
+}
+
+// The runner re-reports a drift signal on every drifted check. Dispatching on
+// each one notifies once per probe interval for as long as the drift lasts —
+// in a cluster that was seven Slack messages and seven language-model calls
+// for one ongoing drift. Nothing changed between them, so there was nothing
+// new to say.
+func TestOngoingDriftNotifiesOnlyOnce(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1000, 0)
+	engine, dispatched := newTestEngine(t, nil,
+		[]proberunner.Probe{probeWithCorrelation("default/api", "pulse-system/app", nil)})
+
+	for index := range 12 {
+		engine.Ingest(context.Background(), observation.Observation{
+			Probe: "default/api", Kind: observation.KindBodyDrift, DriftScore: 0.42,
+			At: now.Add(time.Duration(index) * 5 * time.Second),
+		})
+		time.Sleep(8 * time.Millisecond)
+	}
+
+	waitForIncidents(t, dispatched, 1)
+	time.Sleep(150 * time.Millisecond) // let any further dispatch land
+
+	if got := dispatched.count(); got != 1 {
+		t.Fatalf("dispatched %d times for one ongoing drift, want 1", got)
+	}
+	if got := len(engine.Open()); got != 1 {
+		t.Fatalf("open incidents = %d, want 1", got)
+	}
+}
+
+// A drift that turns into a latency shift is a different statement about the
+// probe and is worth re-announcing.
+func TestChangedTriggerNotifiesAgain(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1000, 0)
+	engine, dispatched := newTestEngine(t, nil,
+		[]proberunner.Probe{probeWithCorrelation("default/api", "pulse-system/app", nil)})
+
+	engine.Ingest(context.Background(), observation.Observation{
+		Probe: "default/api", Kind: observation.KindBodyDrift, DriftScore: 0.42, At: now,
+	})
+	waitForIncidents(t, dispatched, 1)
+
+	engine.Ingest(context.Background(), observation.Observation{
+		Probe: "default/api", Kind: observation.KindLatencyShift, LatencyZScore: 4.1,
+		At: now.Add(5 * time.Second),
+	})
+	waitForIncidents(t, dispatched, 2)
+
+	if got := dispatched.last().Trigger; got != TriggerLatencyShift {
+		t.Fatalf("Trigger = %q, want %q", got, TriggerLatencyShift)
 	}
 }

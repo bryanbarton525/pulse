@@ -268,12 +268,24 @@ func (e *Engine) handleSingleProbeSignal(ctx context.Context, signal observation
 	// second one (drift while already latency-shifted, say) orphans the first:
 	// it stays in e.open, is never found again, and never closes.
 	if existing := e.openForProbeLocked(signal.Probe); existing != nil && len(existing.Members) == 1 {
+		changed := existing.Trigger != trigger
+
 		existing.Trigger = trigger
 		existing.Members[0].Signal = signal
 		existing.Members[0].Role = RoleRootCause
 		existing.UpdatedAt = signal.At
 		existing.Signature = computeSignature(trigger, signal.Probe, "", []string{signal.Probe})
-		e.dispatchLocked(ctx, existing)
+
+		// Refresh only. The runner re-reports a drift signal on EVERY drifted
+		// check, so dispatching on each one notifies once per probe interval
+		// for as long as the drift lasts — seven Slack messages and seven
+		// language-model calls for a single ongoing drift, in a cluster.
+		// Nothing has changed since the notification that already went out, so
+		// there is nothing new to say. A genuine change of trigger (drift
+		// becoming a latency shift) is worth re-announcing.
+		if changed {
+			e.dispatchLocked(ctx, existing)
+		}
 		return
 	}
 
@@ -300,6 +312,20 @@ func (e *Engine) handleSingleProbeSignal(ctx context.Context, signal observation
 	e.byProbe[signal.Probe] = current.ID
 
 	e.dispatchLocked(ctx, current)
+}
+
+// releaseLocked detaches a probe from an incident, closing the incident when
+// nothing is left in it.
+func (e *Engine) releaseLocked(probe string, current *Incident) {
+	delete(e.byProbe, probe)
+
+	if !current.remove(probe) {
+		if timer, found := e.pending[current.ID]; found {
+			timer.Stop()
+			delete(e.pending, current.ID)
+		}
+		delete(e.open, current.ID)
+	}
 }
 
 // openForProbeLocked returns the incident a probe currently belongs to.
@@ -344,7 +370,17 @@ func (e *Engine) incidentForLocked(probe string, related []Candidate, at time.Ti
 	// Already part of an open incident.
 	if incidentID, found := e.byProbe[probe]; found {
 		if current, found := e.open[incidentID]; found {
-			return current
+			// A failure supersedes a drift or latency incident for the same
+			// probe. Those say "passing, but the payload moved" or "passing,
+			// but slower" — statements about a check that is now failing
+			// outright. Keeping the probe in one would also bar it from
+			// correlating, so a shared outage would fragment into a private
+			// incident per already-drifting probe instead of merging.
+			if current.Trigger == TriggerBodyDrift || current.Trigger == TriggerLatencyShift {
+				e.releaseLocked(probe, current)
+			} else {
+				return current
+			}
 		}
 	}
 
