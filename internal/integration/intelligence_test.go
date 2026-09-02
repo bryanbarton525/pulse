@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -474,20 +475,24 @@ func TestDriftThresholdSeparatesHealthyVariationFromRealFailures(t *testing.T) {
 	// identifiers, and timestamps all change between checks.
 	varying := func() string {
 		count := 1 + random.Intn(8)
-		body := `{"items":[`
+
+		var body strings.Builder
+		body.WriteString(`{"items":[`)
 		for index := range count {
 			if index > 0 {
-				body += ","
+				body.WriteString(",")
 			}
 			status := "active"
 			if random.Intn(4) == 0 {
 				status = "pending"
 			}
-			body += fmt.Sprintf(`{"id":%d,"name":%q,"status":%q}`,
+			fmt.Fprintf(&body, `{"id":%d,"name":%q,"status":%q}`,
 				random.Intn(10000), names[random.Intn(len(names))], status)
 		}
-		return body + fmt.Sprintf(`],"total":%d,"generated":"2026-08-31T10:%02d:00Z"}`,
+		fmt.Fprintf(&body, `],"total":%d,"generated":"2026-08-31T10:%02d:00Z"}`,
 			count, random.Intn(60))
+
+		return body.String()
 	}
 
 	score := func(detector driftDetector, body string) float64 {

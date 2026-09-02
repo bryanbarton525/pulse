@@ -63,7 +63,7 @@ func NewSlackAction(
 func (a *SlackAction) Name() string { return a.name }
 
 // Type implements Action.
-func (a *SlackAction) Type() string { return "slack" }
+func (a *SlackAction) Type() string { return TypeSlack }
 
 // Fire implements Action.
 func (a *SlackAction) Fire(ctx context.Context, current *incident.Incident) (string, error) {

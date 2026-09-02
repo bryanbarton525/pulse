@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"sort"
 	"strings"
@@ -77,7 +78,7 @@ func NewObservabilityAction(
 func (a *ObservabilityAction) Name() string { return a.name }
 
 // Type implements Action.
-func (a *ObservabilityAction) Type() string { return "observability" }
+func (a *ObservabilityAction) Type() string { return TypeObservability }
 
 // Fire implements Action.
 func (a *ObservabilityAction) Fire(ctx context.Context, current *incident.Incident) (string, error) {
@@ -238,9 +239,7 @@ func (a *ObservabilityAction) shape(
 		return endpoint + "/v1/logs", headers, payload, err
 
 	case ProviderGeneric:
-		for key, value := range a.config.Headers {
-			headers[key] = value
-		}
+		maps.Copy(headers, a.config.Headers)
 		if a.credential != "" {
 			headers["Authorization"] = "Bearer " + a.credential
 		}
@@ -288,20 +287,19 @@ func lokiLabels(tags map[string]string, current *incident.Incident) map[string]s
 		"job":     "pulse",
 		"trigger": current.Trigger,
 	}
-	for key, value := range tags {
-		labels[key] = value
-	}
+	maps.Copy(labels, tags)
 	// Deliberately NOT labelling by incident ID or probe name: Loki labels are
 	// indexed, and a new value per incident would create unbounded streams.
 	return labels
 }
 
 func otlpLogs(entry record, tags map[string]string) map[string]any {
-	attributes := []map[string]any{
-		{"key": "pulse.incident", "value": map[string]any{"stringValue": entry.Incident}},
-		{"key": "pulse.trigger", "value": map[string]any{"stringValue": entry.Trigger}},
-		{"key": "pulse.root_cause", "value": map[string]any{"stringValue": entry.RootCause}},
-	}
+	attributes := make([]map[string]any, 0, 3+len(tags))
+	attributes = append(attributes,
+		map[string]any{"key": "pulse.incident", "value": map[string]any{"stringValue": entry.Incident}},
+		map[string]any{"key": "pulse.trigger", "value": map[string]any{"stringValue": entry.Trigger}},
+		map[string]any{"key": "pulse.root_cause", "value": map[string]any{"stringValue": entry.RootCause}},
+	)
 
 	keys := make([]string, 0, len(tags))
 	for key := range tags {
@@ -350,9 +348,7 @@ func mergeRecord(document map[string]any, entry record) error {
 	if err := json.Unmarshal(encoded, &fields); err != nil {
 		return err
 	}
-	for key, value := range fields {
-		document[key] = value
-	}
+	maps.Copy(document, fields)
 
 	return nil
 }

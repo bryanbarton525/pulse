@@ -185,9 +185,8 @@ func BenchmarkRealPotionEmbed(b *testing.B) {
 
 	b.ReportAllocs()
 	b.SetBytes(int64(len(body)))
-	b.ResetTimer()
 
-	for range b.N {
+	for b.Loop() {
 		if _, err := embedder.Embed(ctx, texts); err != nil {
 			b.Fatalf("Embed() error = %v", err)
 		}

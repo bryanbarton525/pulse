@@ -171,11 +171,7 @@ func (r *Runner) Start(ctx context.Context, config *ProbeConfig) {
 		// Without this, all goroutines would share the same `probe` pointer
 		// and would all check the last probe in the slice.
 		p := probe
-		r.running.Add(1)
-		go func() {
-			defer r.running.Done()
-			r.runProbe(ctx, p)
-		}()
+		r.running.Go(func() { r.runProbe(ctx, p) })
 	}
 
 	r.logger.Info("Started probe runner", "probeCount", len(config.Probes))
@@ -539,7 +535,10 @@ func (r *Runner) executeGrpcRequest(probe Probe) *ProbeResult {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, err := grpc.DialContext(ctx, probe.URL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// NewClient replaces the deprecated DialContext. Neither blocks: the
+	// connection is established lazily by the first RPC, so the health check
+	// below is what actually surfaces an unreachable target, bounded by ctx.
+	conn, err := grpc.NewClient(probe.URL, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return &ProbeResult{
 			Name:           probe.Name,
@@ -551,7 +550,7 @@ func (r *Runner) executeGrpcRequest(probe Probe) *ProbeResult {
 			ExpectedStatus: 0, // 0 = OK in gRPC
 		}
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client := healthpb.NewHealthClient(conn)
 	req := &healthpb.HealthCheckRequest{Service: probe.GrpcService}

@@ -27,6 +27,14 @@ import (
 	"github.com/bryanbarton525/pulse/internal/incident"
 )
 
+// Action types, matching AnomalyPolicy.spec.actions[].type.
+const (
+	TypeMetric        = "metric"
+	TypeLLM           = "llm"
+	TypeSlack         = "slack"
+	TypeObservability = "observability"
+)
+
 // Action is one thing to do about an incident.
 //
 // Fire returns a result string that later actions can consume — this is how a

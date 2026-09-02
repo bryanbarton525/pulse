@@ -10,7 +10,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -64,7 +64,7 @@ type StatusSyncer struct {
 	// Recorder emits Kubernetes Events for incidents. The probe runner and the
 	// incident engine deliberately hold no Kubernetes client, so this is the
 	// only component that can put an incident on `kubectl describe`.
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 }
 
 // Start implements manager.Runnable. The manager calls this in a goroutine
@@ -144,9 +144,9 @@ func (s *StatusSyncer) syncAllStatuses(ctx context.Context) {
 		}
 
 		if res.Healthy {
-			canary.Status.Phase = "Healthy"
+			canary.Status.Phase = canaryv1alpha1.PhaseHealthy
 		} else {
-			canary.Status.Phase = "Unhealthy"
+			canary.Status.Phase = canaryv1alpha1.PhaseUnhealthy
 		}
 		canary.Status.LastStatus = res.StatusCode
 		canary.Status.Message = res.Message
@@ -178,9 +178,9 @@ func (s *StatusSyncer) syncAllStatuses(ctx context.Context) {
 		}
 
 		if res.Healthy {
-			canary.Status.Phase = "Healthy"
+			canary.Status.Phase = canaryv1alpha1.PhaseHealthy
 		} else {
-			canary.Status.Phase = "Unhealthy"
+			canary.Status.Phase = canaryv1alpha1.PhaseUnhealthy
 		}
 		canary.Status.LastStatus = res.StatusCode
 		canary.Status.Message = res.Message
@@ -218,9 +218,9 @@ func (s *StatusSyncer) syncAllStatuses(ctx context.Context) {
 // writes/minute. If most probes are stable (Healthy → Healthy), skipping
 // unchanged statuses drops this to near zero during steady state.
 func (s *StatusSyncer) statusChanged(canary *canaryv1alpha1.HttpCanary, res proberunner.ProbeResult) bool {
-	expectedPhase := "Unhealthy"
+	expectedPhase := canaryv1alpha1.PhaseUnhealthy
 	if res.Healthy {
-		expectedPhase = "Healthy"
+		expectedPhase = canaryv1alpha1.PhaseHealthy
 	}
 
 	return canary.Status.Phase != expectedPhase ||
@@ -229,9 +229,9 @@ func (s *StatusSyncer) statusChanged(canary *canaryv1alpha1.HttpCanary, res prob
 }
 
 func (s *StatusSyncer) grpcStatusChanged(canary *canaryv1alpha1.GrpcCanary, res proberunner.ProbeResult) bool {
-	expectedPhase := "Unhealthy"
+	expectedPhase := canaryv1alpha1.PhaseUnhealthy
 	if res.Healthy {
-		expectedPhase = "Healthy"
+		expectedPhase = canaryv1alpha1.PhaseHealthy
 	}
 
 	return canary.Status.Phase != expectedPhase ||

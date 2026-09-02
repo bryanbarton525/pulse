@@ -34,6 +34,14 @@ import (
 	"github.com/bryanbarton525/pulse/internal/incident"
 )
 
+// Actions describe what the controller did about the object, which the events
+// API records alongside the reason.
+const (
+	EventActionCorrelate = "Correlate"
+	EventActionSuppress  = "Suppress"
+	EventActionScore     = "Score"
+)
+
 // Reasons used on the Kubernetes Events this syncer emits.
 const (
 	EventReasonIncidentOpened       = "IncidentOpened"
@@ -201,23 +209,25 @@ func (s *StatusSyncer) emitIncidentEvent(
 		return
 	}
 
+	// The new events API takes a `related` object and an `action` alongside the
+	// reason. There is no secondary object here, so related is nil.
 	switch {
 	case next.Trigger == incident.TriggerBodyDrift:
-		s.Recorder.Eventf(object, "Warning", EventReasonBodyDrift,
+		s.Recorder.Eventf(object, nil, "Warning", EventReasonBodyDrift, EventActionScore,
 			"Response body drifted from its baseline (score %s) while the check was still passing",
 			next.Score)
 
 	case next.Trigger == incident.TriggerLatencyShift:
-		s.Recorder.Eventf(object, "Warning", EventReasonLatencyShift,
+		s.Recorder.Eventf(object, nil, "Warning", EventReasonLatencyShift, EventActionScore,
 			"Check is passing but %s standard deviations slower than its baseline", next.Score)
 
 	case next.Role == canaryv1alpha1.IncidentRoleDownstream:
-		s.Recorder.Eventf(object, "Normal", EventReasonSuppressedByIncident,
+		s.Recorder.Eventf(object, nil, "Normal", EventReasonSuppressedByIncident, EventActionSuppress,
 			"Failing as part of incident %s; root cause is %s",
 			next.IncidentID, view.incident.RootCause)
 
 	default:
-		s.Recorder.Eventf(object, "Warning", EventReasonIncidentOpened,
+		s.Recorder.Eventf(object, nil, "Warning", EventReasonIncidentOpened, EventActionCorrelate,
 			"Incident %s opened with %d affected check(s); root cause is %s",
 			next.IncidentID, len(view.incident.Members), view.incident.RootCause)
 	}

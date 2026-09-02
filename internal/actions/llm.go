@@ -81,7 +81,7 @@ func NewLLMAction(
 func (a *LLMAction) Name() string { return a.name }
 
 // Type implements Action.
-func (a *LLMAction) Type() string { return "llm" }
+func (a *LLMAction) Type() string { return TypeLLM }
 
 type chatMessage struct {
 	Role    string `json:"role"`

@@ -116,7 +116,7 @@ func (g *Graph) Edges() [][2]string {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
-	var edges [][2]string
+	edges := make([][2]string, 0, len(g.upstreams))
 	for canary, upstreams := range g.upstreams {
 		for upstream := range upstreams {
 			edges = append(edges, [2]string{upstream, canary})

@@ -100,13 +100,16 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
+# GOTOOLCHAIN pins the compiler the linter type-checks against to the version
+# in go.mod. Without it, a newer Go on the host emits export data the pinned
+# golangci-lint cannot parse, and every file fails with a bogus typecheck error.
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
-	"$(GOLANGCI_LINT)" run
+	GOTOOLCHAIN=$(GO_TOOLCHAIN) "$(GOLANGCI_LINT)" run
 
 .PHONY: lint-fix
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
-	"$(GOLANGCI_LINT)" run --fix
+	GOTOOLCHAIN=$(GO_TOOLCHAIN) "$(GOLANGCI_LINT)" run --fix
 
 .PHONY: lint-config
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
@@ -160,12 +163,15 @@ docker-build-incidentengine: models-present ## Build docker image with the incid
 docker-push-incidentengine: ## Push the incident engine image.
 	$(CONTAINER_TOOL) push ${INCIDENT_ENGINE_IMG}
 
-# The images COPY model directories, so a missing one fails the build with a
-# confusing docker error. Check for it up front and say what to run instead.
+# Warn, but do not fail: an image built without weights still runs, it just
+# logs that the model could not be loaded and disables that trigger. Making
+# this fatal broke every CI job that builds an image without fetching 210 MiB
+# of weights first.
 .PHONY: models-present
 models-present:
 	@test -f $(MODELS_DIR)/potion/model.bin && test -f $(MODELS_DIR)/minilm/model.onnx \
-		|| (echo "Models are missing. Run: make fetch-models" && exit 1)
+		|| echo "WARNING: model weights are missing, so the image will ship without them "\
+		        "and the intelligence triggers will be disabled at runtime. Run: make fetch-models"
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
@@ -287,6 +293,10 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
 GOLANGCI_LINT_VERSION ?= v2.8.0
+# The Go version golangci-lint should type-check against, read from go.mod. A
+# newer Go on the host writes export data the pinned linter cannot parse, which
+# surfaces as every file failing with an unrelated typecheck error.
+GO_TOOLCHAIN ?= go$(shell awk '/^go /{print $$2}' go.mod)
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)

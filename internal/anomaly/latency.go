@@ -58,14 +58,8 @@ func NewLatencyDetector() *LatencyDetector {
 // latency; absorbing those would inflate the mean until genuine slowdowns stop
 // registering.
 func (l *LatencyDetector) Observe(probe string, duration time.Duration, config LatencyConfig) LatencyResult {
-	warmup := config.WarmupChecks
-	if warmup < 2 {
-		warmup = 2
-	}
-	breaches := config.ConsecutiveBreaches
-	if breaches < 1 {
-		breaches = 1
-	}
+	warmup := max(config.WarmupChecks, 2)
+	breaches := max(config.ConsecutiveBreaches, 1)
 
 	seconds := duration.Seconds()
 
@@ -114,10 +108,7 @@ func (s *latencyStats) absorb(value float64, warmup int) {
 		return
 	}
 
-	alpha := 1 / float64(s.samples)
-	if floor := 1 / float64(warmup); alpha < floor {
-		alpha = floor
-	}
+	alpha := max(1/float64(s.samples), 1/float64(warmup))
 
 	delta := value - s.mean
 	s.mean += alpha * delta

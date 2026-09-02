@@ -131,17 +131,17 @@ func buildActions(
 
 	for _, action := range configured {
 		switch action.Type {
-		case "metric":
+		case TypeMetric:
 			compiled = append(compiled, NewMetricAction(action.Name))
 
-		case "llm":
+		case TypeLLM:
 			if action.LLM == nil {
 				return nil, fmt.Errorf("action %q is missing its llm block", action.Name)
 			}
 			compiled = append(compiled,
 				NewLLMAction(action.Name, *action.LLM, credentials, describe, history))
 
-		case "slack":
+		case TypeSlack:
 			if action.Slack == nil {
 				return nil, fmt.Errorf("action %q is missing its slack block", action.Name)
 			}
@@ -151,7 +151,7 @@ func buildActions(
 			}
 			compiled = append(compiled, built)
 
-		case "observability":
+		case TypeObservability:
 			if action.Observability == nil {
 				return nil, fmt.Errorf("action %q is missing its observability block", action.Name)
 			}
@@ -214,7 +214,7 @@ func (d *Dispatcher) fireForPolicy(ctx context.Context, policy string, current *
 			continue
 		}
 
-		if action.Type() == "llm" && result != "" {
+		if action.Type() == TypeLLM && result != "" {
 			current.Investigation = result
 		}
 	}

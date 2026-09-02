@@ -5,6 +5,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// Canary status phases. These match the Enum markers on the status fields of
+// both HttpCanary and GrpcCanary.
+const (
+	PhaseHealthy   = "Healthy"
+	PhaseUnhealthy = "Unhealthy"
+	PhaseUnknown   = "Unknown"
+)
+
 const (
 	HttpCanaryOutputPrometheus = "prometheus"
 	HttpCanaryOutputStdout     = "stdout"

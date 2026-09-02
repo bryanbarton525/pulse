@@ -12,7 +12,9 @@ func defaultLatencyConfig() LatencyConfig {
 
 // warmLatency feeds jittered samples around a target so the variance is
 // non-zero, as it would be against a real service.
-func warmLatency(detector *LatencyDetector, probe string, config LatencyConfig, base time.Duration) {
+func warmLatency(detector *LatencyDetector, probe string, config LatencyConfig) {
+	const base = 100 * time.Millisecond
+
 	random := rand.New(rand.NewSource(1))
 	for range config.WarmupChecks {
 		jitter := time.Duration(random.NormFloat64() * float64(base) * 0.05)
@@ -42,7 +44,7 @@ func TestLatencyIgnoresNormalJitter(t *testing.T) {
 
 	detector := NewLatencyDetector()
 	config := defaultLatencyConfig()
-	warmLatency(detector, "ns/probe", config, 100*time.Millisecond)
+	warmLatency(detector, "ns/probe", config)
 
 	random := rand.New(rand.NewSource(2))
 	for round := range 100 {
@@ -58,7 +60,7 @@ func TestLatencyDetectsSustainedSlowdown(t *testing.T) {
 
 	detector := NewLatencyDetector()
 	config := defaultLatencyConfig()
-	warmLatency(detector, "ns/probe", config, 100*time.Millisecond)
+	warmLatency(detector, "ns/probe", config)
 
 	var shifted bool
 	for range config.ConsecutiveBreaches {
@@ -76,7 +78,7 @@ func TestLatencyDebounceHoldsSingleSpike(t *testing.T) {
 
 	detector := NewLatencyDetector()
 	config := defaultLatencyConfig()
-	warmLatency(detector, "ns/probe", config, 100*time.Millisecond)
+	warmLatency(detector, "ns/probe", config)
 
 	if result := detector.Observe("ns/probe", 900*time.Millisecond, config); result.Shifted {
 		t.Fatal("Shifted = true on a single spike, want the debounce to hold it")
@@ -96,7 +98,7 @@ func TestLatencyIgnoresSpeedups(t *testing.T) {
 
 	detector := NewLatencyDetector()
 	config := defaultLatencyConfig()
-	warmLatency(detector, "ns/probe", config, 100*time.Millisecond)
+	warmLatency(detector, "ns/probe", config)
 
 	result := detector.Observe("ns/probe", 5*time.Millisecond, config)
 	if result.Shifted {
@@ -114,7 +116,7 @@ func TestLatencyBaselineDoesNotAbsorbSustainedSlowdown(t *testing.T) {
 
 	detector := NewLatencyDetector()
 	config := defaultLatencyConfig()
-	warmLatency(detector, "ns/probe", config, 100*time.Millisecond)
+	warmLatency(detector, "ns/probe", config)
 
 	var last LatencyResult
 	for range 200 {
@@ -135,8 +137,8 @@ func TestLatencyRetainKeepsSurvivingProbes(t *testing.T) {
 
 	detector := NewLatencyDetector()
 	config := defaultLatencyConfig()
-	warmLatency(detector, "ns/keep", config, 100*time.Millisecond)
-	warmLatency(detector, "ns/drop", config, 100*time.Millisecond)
+	warmLatency(detector, "ns/keep", config)
+	warmLatency(detector, "ns/drop", config)
 
 	detector.Retain(map[string]struct{}{"ns/keep": {}})
 

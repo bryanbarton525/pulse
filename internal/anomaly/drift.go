@@ -64,14 +64,8 @@ func NewDriftDetector() *DriftDetector {
 // reported through the normal path and its body is usually an error page that
 // would corrupt the baseline.
 func (d *DriftDetector) Observe(probe string, vector embed.Vector, config DriftConfig) DriftResult {
-	warmup := config.WarmupChecks
-	if warmup < 2 {
-		warmup = 2
-	}
-	breaches := config.ConsecutiveBreaches
-	if breaches < 1 {
-		breaches = 1
-	}
+	warmup := max(config.WarmupChecks, 2)
+	breaches := max(config.ConsecutiveBreaches, 1)
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -130,10 +124,7 @@ func (b *baseline) absorb(vector embed.Vector, warmup int) {
 		return
 	}
 
-	alpha := 1 / float64(b.samples)
-	if floor := 1 / float64(warmup); alpha < floor {
-		alpha = floor
-	}
+	alpha := max(1/float64(b.samples), 1/float64(warmup))
 
 	for index := range b.centroid.Values {
 		blended := float64(b.centroid.Values[index])*(1-alpha) + float64(vector.Values[index])*alpha

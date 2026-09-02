@@ -48,6 +48,9 @@ func (f *fakeAction) count() int {
 	return f.calls
 }
 
+// policyApp is the policy most of these tests dispatch against.
+const policyApp = "pulse-system/app"
+
 func newTestDispatcher(t *testing.T) *Dispatcher {
 	t.Helper()
 
@@ -76,10 +79,10 @@ func TestDispatcherRunsActionsInDeclaredOrderAndChainsInvestigation(t *testing.T
 	slack := &fakeAction{name: "notify", kind: "slack", order: &order}
 
 	dispatcher := newTestDispatcher(t)
-	installPolicy(dispatcher, "pulse-system/app", NewThrottle(0, 0), llm, slack)
+	installPolicy(dispatcher, policyApp, NewThrottle(0, 0), llm, slack)
 
 	current := testIncident()
-	current.Policy = "pulse-system/app"
+	current.Policy = policyApp
 	dispatcher.Dispatch(context.Background(), current)
 
 	if len(order) != 2 || order[0] != "investigate" || order[1] != "notify" {
@@ -98,10 +101,10 @@ func TestDispatcherContinuesAfterAnActionFails(t *testing.T) {
 	working := &fakeAction{name: "ship", kind: "observability"}
 
 	dispatcher := newTestDispatcher(t)
-	installPolicy(dispatcher, "pulse-system/app", NewThrottle(0, 0), failing, working)
+	installPolicy(dispatcher, policyApp, NewThrottle(0, 0), failing, working)
 
 	current := testIncident()
-	current.Policy = "pulse-system/app"
+	current.Policy = policyApp
 	dispatcher.Dispatch(context.Background(), current)
 
 	if working.count() != 1 {
@@ -116,10 +119,10 @@ func TestDispatcherThrottlesRepeatedIncidents(t *testing.T) {
 
 	slack := &fakeAction{name: "notify", kind: "slack"}
 	dispatcher := newTestDispatcher(t)
-	installPolicy(dispatcher, "pulse-system/app", NewThrottle(15*time.Minute, 4), slack)
+	installPolicy(dispatcher, policyApp, NewThrottle(15*time.Minute, 4), slack)
 
 	current := testIncident()
-	current.Policy = "pulse-system/app"
+	current.Policy = policyApp
 
 	for range 5 {
 		dispatcher.Dispatch(context.Background(), current)
@@ -136,11 +139,11 @@ func TestDispatcherThrottlesPerSignature(t *testing.T) {
 
 	slack := &fakeAction{name: "notify", kind: "slack"}
 	dispatcher := newTestDispatcher(t)
-	installPolicy(dispatcher, "pulse-system/app", NewThrottle(15*time.Minute, 4), slack)
+	installPolicy(dispatcher, policyApp, NewThrottle(15*time.Minute, 4), slack)
 
 	for _, signature := range []string{"sig-a", "sig-b", "sig-c"} {
 		current := testIncident()
-		current.Policy = "pulse-system/app"
+		current.Policy = policyApp
 		current.Signature = signature
 		dispatcher.Dispatch(context.Background(), current)
 	}
@@ -160,14 +163,14 @@ func TestDispatcherSuppressesDownstreamByDefault(t *testing.T) {
 
 	dispatcher := newTestDispatcher(t)
 	installPolicy(dispatcher, "pulse-system/platform", NewThrottle(0, 0), rootAction)
-	installPolicy(dispatcher, "pulse-system/app", NewThrottle(0, 0), victimAction)
+	installPolicy(dispatcher, policyApp, NewThrottle(0, 0), victimAction)
 
 	dispatcher.mu.Lock()
 	dispatcher.probes = map[string]proberunner.Probe{
 		"default/payments": {
 			Name: "default/payments",
 			Intelligence: &proberunner.ProbeIntelligence{
-				Policy:    "pulse-system/app",
+				Policy:    policyApp,
 				Incidents: proberunner.ProbeIncidents{NotifyOnDownstream: false},
 			},
 		},
@@ -195,14 +198,14 @@ func TestDispatcherSendsTerseNoticeWhenDownstreamOptsIn(t *testing.T) {
 
 	dispatcher := newTestDispatcher(t)
 	installPolicy(dispatcher, "pulse-system/platform", NewThrottle(0, 0), rootAction)
-	installPolicy(dispatcher, "pulse-system/app", NewThrottle(0, 0), victimAction)
+	installPolicy(dispatcher, policyApp, NewThrottle(0, 0), victimAction)
 
 	dispatcher.mu.Lock()
 	dispatcher.probes = map[string]proberunner.Probe{
 		"default/payments": {
 			Name: "default/payments",
 			Intelligence: &proberunner.ProbeIntelligence{
-				Policy:    "pulse-system/app",
+				Policy:    policyApp,
 				Incidents: proberunner.ProbeIncidents{NotifyOnDownstream: true},
 			},
 		},
@@ -233,14 +236,14 @@ func TestDispatcherDoesNotDoubleNotifyWithinOnePolicy(t *testing.T) {
 
 	action := &fakeAction{name: "notify", kind: "slack"}
 	dispatcher := newTestDispatcher(t)
-	installPolicy(dispatcher, "pulse-system/app", NewThrottle(0, 0), action)
+	installPolicy(dispatcher, policyApp, NewThrottle(0, 0), action)
 
 	dispatcher.mu.Lock()
 	dispatcher.probes = map[string]proberunner.Probe{
 		"default/payments": {
 			Name: "default/payments",
 			Intelligence: &proberunner.ProbeIntelligence{
-				Policy:    "pulse-system/app",
+				Policy:    policyApp,
 				Incidents: proberunner.ProbeIncidents{NotifyOnDownstream: true},
 			},
 		},
@@ -248,7 +251,7 @@ func TestDispatcherDoesNotDoubleNotifyWithinOnePolicy(t *testing.T) {
 	dispatcher.mu.Unlock()
 
 	current := testIncident()
-	current.Policy = "pulse-system/app"
+	current.Policy = policyApp
 	dispatcher.Dispatch(context.Background(), current)
 
 	if action.count() != 1 {

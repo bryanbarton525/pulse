@@ -95,7 +95,7 @@ func NewMetricAction(name string) *MetricAction { return &MetricAction{name: nam
 func (a *MetricAction) Name() string { return a.name }
 
 // Type implements Action.
-func (a *MetricAction) Type() string { return "metric" }
+func (a *MetricAction) Type() string { return TypeMetric }
 
 // Fire implements Action.
 func (a *MetricAction) Fire(_ context.Context, _ *incident.Incident) (string, error) {

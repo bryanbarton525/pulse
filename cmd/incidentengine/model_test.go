@@ -112,11 +112,15 @@ func TestColdModelResolutionIsDeterministic(t *testing.T) {
 		coldProbe("m/mid", "pulse-system/mu", httpColdModel("http://mu", "")),
 	}
 
+	// Repeat, because the bug this guards against is map iteration order:
+	// a single pass can pick the right policy by luck.
 	for range 20 {
 		resolved, conflicts := resolveColdModel(probes)
 		if resolved == nil {
 			t.Fatal("resolveColdModel() = nil")
+			return
 		}
+
 		if resolved.HTTP.Endpoint != "http://alpha" {
 			t.Fatalf("resolved endpoint = %q, want the first policy in sorted order",
 				resolved.HTTP.Endpoint)

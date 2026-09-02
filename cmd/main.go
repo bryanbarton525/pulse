@@ -243,7 +243,7 @@ func main() {
 		// The Events this records are the only place an incident shows up in
 		// `kubectl describe`, since neither the runner nor the engine holds a
 		// Kubernetes client.
-		Recorder: mgr.GetEventRecorderFor("pulse-intelligence"),
+		Recorder: mgr.GetEventRecorder("pulse-intelligence"),
 	}); err != nil {
 		setupLog.Error(err, "Failed to register status syncer")
 		os.Exit(1)

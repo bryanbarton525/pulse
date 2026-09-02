@@ -3,6 +3,7 @@ package proberunner
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -46,12 +47,23 @@ func (b *bodyEmbedder) Dimensions() int { return 3 }
 func (b *bodyEmbedder) Close() error    { return nil }
 
 func (b *bodyEmbedder) Embed(_ context.Context, texts []string) ([]embed.Vector, error) {
+	// Keys are matched in sorted order, never in map order. Ranging the map
+	// directly makes the choice arbitrary whenever a body matches more than
+	// one key, and Go re-randomises that order on every range -- so the same
+	// body could embed to a different vector on each call, and any test built
+	// on it would flake.
+	keys := make([]string, 0, len(b.vectors))
+	for key := range b.vectors {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
 	out := make([]embed.Vector, len(texts))
 	for index, text := range texts {
 		values := []float32{0, 0, 1}
-		for key, candidate := range b.vectors {
+		for _, key := range keys {
 			if strings.Contains(text, key) {
-				values = candidate
+				values = b.vectors[key]
 				break
 			}
 		}
@@ -158,9 +170,11 @@ func TestIntelligenceIsSilentWhileHealthy(t *testing.T) {
 func TestIntelligenceShipsDriftForPassingChecks(t *testing.T) {
 	t.Parallel()
 
+	// "widget" appears only in the populated body and "total" only in the
+	// empty one, so each body matches exactly one key.
 	embedder := &bodyEmbedder{vectors: map[string][]float32{
 		"widget": {1, 0, 0},
-		"items":  {0, 1, 0},
+		"total":  {0, 1, 0},
 	}}
 	intelligence, shipper := testIntelligence(t, embedder)
 	probe := intelligentProbe(ProbeTriggers{

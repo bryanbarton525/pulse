@@ -132,7 +132,10 @@ func main() {
 		}
 	}()
 
-	go watchConfigReload(ctx, configPath, authFilePath, engine, dispatcher, aggregator, models, logger)
+	// The reload loop takes only a context; the logger rides inside it, because
+	// a function taking both forces callers to reason about which one wins.
+	go watchConfigReload(logr.NewContext(ctx, logger), configPath, authFilePath,
+		engine, dispatcher, aggregator, models)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -252,8 +255,9 @@ func watchConfigReload(
 	dispatcher *actions.Dispatcher,
 	aggregator *incident.Aggregator,
 	models *modelState,
-	logger logr.Logger,
 ) {
+	logger := logr.FromContextOrDiscard(ctx)
+
 	var configModTime, authModTime time.Time
 	if info, err := os.Stat(configPath); err == nil {
 		configModTime = info.ModTime()

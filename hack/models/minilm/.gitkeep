@@ -1,0 +1,4 @@
+# Keeps this directory in git so the image builds COPY it successfully
+# even before `make fetch-models` has run. The weights themselves are
+# gitignored; without them the model simply fails to load and the
+# corresponding trigger is disabled, with a warning in the logs.

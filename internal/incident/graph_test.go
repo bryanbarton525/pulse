@@ -13,12 +13,12 @@ func TestRankRootCausePicksTheNodeWithNoFailingUpstream(t *testing.T) {
 	t.Parallel()
 
 	graph := NewGraph()
-	graph.AddEdges("default/payments", []string{"data/postgres"})
+	graph.AddEdges("default/payments", []string{probeDatabase})
 
 	// Candidates arrive sorted by onset; the API was noticed first.
-	got := graph.RankRootCause([]string{"default/payments", "data/postgres"})
+	got := graph.RankRootCause([]string{"default/payments", probeDatabase})
 
-	if got != "data/postgres" {
+	if got != probeDatabase {
 		t.Fatalf("RankRootCause() = %q, want data/postgres", got)
 	}
 }
@@ -28,11 +28,11 @@ func TestRankRootCauseWalksMultipleHops(t *testing.T) {
 
 	graph := NewGraph()
 	graph.AddEdges("edge/web", []string{"default/payments"})
-	graph.AddEdges("default/payments", []string{"data/postgres"})
+	graph.AddEdges("default/payments", []string{probeDatabase})
 
-	got := graph.RankRootCause([]string{"edge/web", "default/payments", "data/postgres"})
+	got := graph.RankRootCause([]string{"edge/web", "default/payments", probeDatabase})
 
-	if got != "data/postgres" {
+	if got != probeDatabase {
 		t.Fatalf("RankRootCause() = %q, want the deepest failing node data/postgres", got)
 	}
 }
@@ -43,7 +43,7 @@ func TestRankRootCauseIgnoresHealthyUpstreams(t *testing.T) {
 	t.Parallel()
 
 	graph := NewGraph()
-	graph.AddEdges("default/payments", []string{"data/postgres"})
+	graph.AddEdges("default/payments", []string{probeDatabase})
 
 	// postgres is not in the failing set, so payments is the root cause.
 	got := graph.RankRootCause([]string{"default/payments"})
@@ -90,11 +90,11 @@ func TestRankRootCauseWithNoCandidates(t *testing.T) {
 func TestRolesLabelsEveryMember(t *testing.T) {
 	t.Parallel()
 
-	failing := []string{"data/postgres", "default/payments", "edge/web"}
-	roles := NewGraph().Roles(failing, "data/postgres")
+	failing := []string{probeDatabase, "default/payments", "edge/web"}
+	roles := NewGraph().Roles(failing, probeDatabase)
 
-	if roles["data/postgres"] != RoleRootCause {
-		t.Fatalf("root cause role = %q, want %q", roles["data/postgres"], RoleRootCause)
+	if roles[probeDatabase] != RoleRootCause {
+		t.Fatalf("root cause role = %q, want %q", roles[probeDatabase], RoleRootCause)
 	}
 	for _, victim := range []string{"default/payments", "edge/web"} {
 		if roles[victim] != RoleDownstream {
@@ -130,18 +130,18 @@ func TestBuildGraphUnionsTopologyAcrossPolicies(t *testing.T) {
 				Policy: "pulse-system/app-team",
 				Topology: proberunner.ProbeTopology{
 					DependsOn: []proberunner.ProbeDependency{
-						{Canary: "default/payments", Upstream: []string{"data/postgres"}},
+						{Canary: "default/payments", Upstream: []string{probeDatabase}},
 					},
 				},
 			},
 		},
 		{
-			Name: "data/postgres",
+			Name: probeDatabase,
 			Intelligence: &proberunner.ProbeIntelligence{
 				Policy: "pulse-system/platform-team",
 				Topology: proberunner.ProbeTopology{
 					DependsOn: []proberunner.ProbeDependency{
-						{Canary: "data/postgres", Upstream: []string{"data/storage"}},
+						{Canary: probeDatabase, Upstream: []string{"data/storage"}},
 					},
 				},
 			},
@@ -153,13 +153,13 @@ func TestBuildGraphUnionsTopologyAcrossPolicies(t *testing.T) {
 	graph := BuildGraph(probes)
 
 	want := [][2]string{
-		{"data/postgres", "default/payments"},
-		{"data/storage", "data/postgres"},
+		{probeDatabase, "default/payments"},
+		{"data/storage", probeDatabase},
 	}
 	if got := graph.Edges(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Edges() = %v, want %v", got, want)
 	}
-	if got := graph.RankRootCause([]string{"default/payments", "data/postgres", "data/storage"}); got != "data/storage" {
+	if got := graph.RankRootCause([]string{"default/payments", probeDatabase, "data/storage"}); got != "data/storage" {
 		t.Fatalf("RankRootCause() = %q, want data/storage across the unioned graph", got)
 	}
 }

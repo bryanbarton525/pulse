@@ -53,10 +53,7 @@ func TestStopWaitsForInFlightChecksBeforeTheShipperCloses(t *testing.T) {
 		Intelligence: &ProbeIntelligence{Policy: "pulse-system/test"},
 	}}}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	runner.Start(ctx, config)
+	runner.Start(t.Context(), config)
 
 	// Stop while the first check is still inside its HTTP call.
 	time.Sleep(30 * time.Millisecond)
@@ -103,13 +100,11 @@ func TestConcurrentShipAndStop(t *testing.T) {
 
 	var group sync.WaitGroup
 	for range 32 {
-		group.Add(1)
-		go func() {
-			defer group.Done()
+		group.Go(func() {
 			for range 50 {
 				shipper.Ship(context.Background(), testObservation())
 			}
-		}()
+		})
 	}
 
 	time.Sleep(5 * time.Millisecond)
@@ -167,9 +162,7 @@ func TestReloadWaitsForThePreviousGeneration(t *testing.T) {
 		Interval: 1, ExpectedStatus: 200,
 	}}}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	ctx := t.Context()
 	runner.Start(ctx, config)
 	time.Sleep(20 * time.Millisecond)
 

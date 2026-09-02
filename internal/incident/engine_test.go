@@ -13,6 +13,9 @@ import (
 	"github.com/bryanbarton525/pulse/internal/proberunner"
 )
 
+// probeDatabase is the shared upstream in these correlation scenarios.
+const probeDatabase = "data/postgres"
+
 // stubEmbedder maps known text to controlled vectors so tests can dictate
 // similarity exactly.
 type stubEmbedder struct {
@@ -192,14 +195,14 @@ func TestEngineNamesRootCauseFromDeclaredTopology(t *testing.T) {
 		[]proberunner.Probe{
 			probeWithCorrelation("default/payments", "pulse-system/app-team",
 				[]proberunner.ProbeDependency{
-					{Canary: "default/payments", Upstream: []string{"data/postgres"}},
+					{Canary: "default/payments", Upstream: []string{probeDatabase}},
 				}),
-			probeWithCorrelation("data/postgres", "pulse-system/platform-team", nil),
+			probeWithCorrelation(probeDatabase, "pulse-system/platform-team", nil),
 		})
 
 	// The API is noticed first, but the database is to blame.
 	engine.Ingest(context.Background(), failure("default/payments", "api 500", now))
-	engine.Ingest(context.Background(), failure("data/postgres", "connection refused", now.Add(time.Second)))
+	engine.Ingest(context.Background(), failure(probeDatabase, "connection refused", now.Add(time.Second)))
 	waitForIncidents(t, dispatcher, 2)
 
 	open := engine.Open()
@@ -208,7 +211,7 @@ func TestEngineNamesRootCauseFromDeclaredTopology(t *testing.T) {
 	}
 
 	incident := open[0]
-	if incident.RootCause != "data/postgres" {
+	if incident.RootCause != probeDatabase {
 		t.Fatalf("RootCause = %q, want data/postgres", incident.RootCause)
 	}
 	// Ownership follows the root cause across the policy boundary.
@@ -218,7 +221,7 @@ func TestEngineNamesRootCauseFromDeclaredTopology(t *testing.T) {
 
 	for _, member := range incident.Members {
 		wantRole := RoleDownstream
-		if member.Probe == "data/postgres" {
+		if member.Probe == probeDatabase {
 			wantRole = RoleRootCause
 		}
 		if member.Role != wantRole {
@@ -237,11 +240,11 @@ func TestEngineCorrelatesAcrossPolicyBoundaries(t *testing.T) {
 		map[string][]float32{"same wall": {1, 0, 0}},
 		[]proberunner.Probe{
 			probeWithCorrelation("default/payments", "pulse-system/app-team", nil),
-			probeWithCorrelation("data/postgres", "pulse-system/platform-team", nil),
+			probeWithCorrelation(probeDatabase, "pulse-system/platform-team", nil),
 		})
 
 	engine.Ingest(context.Background(), failure("default/payments", "same wall", now))
-	engine.Ingest(context.Background(), failure("data/postgres", "same wall", now.Add(time.Second)))
+	engine.Ingest(context.Background(), failure(probeDatabase, "same wall", now.Add(time.Second)))
 	waitForIncidents(t, dispatcher, 2)
 
 	if open := engine.Open(); len(open) != 1 {
