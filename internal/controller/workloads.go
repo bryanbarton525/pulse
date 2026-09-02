@@ -97,12 +97,10 @@ func quantityOrDefault(variable, fallback string) *resource.Quantity {
 // The default of one reproduces the original single-pod behavior exactly,
 // including its sharding: one shard owns every probe.
 func probeRunnerShards() int32 {
-	if raw := os.Getenv("PULSE_PROBE_RUNNER_SHARDS"); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
-			return int32(parsed)
-		}
-	}
-	return 1
+	// Shares the runner's parser so the replica count the controller sets and
+	// the shard maths each pod performs can never disagree. The result is
+	// bounded by MaxShards, which is what makes narrowing to int32 safe.
+	return int32(proberunner.ParseShardCount(os.Getenv("PULSE_PROBE_RUNNER_SHARDS")))
 }
 
 // ensureProbeRunner creates or updates the probe runner StatefulSet.

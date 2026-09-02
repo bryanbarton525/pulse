@@ -71,18 +71,40 @@ func OrdinalFromPodName(podName string) (int, error) {
 	return ordinal, nil
 }
 
+// MaxShards caps the shard count.
+//
+// The bound is what makes the conversion to a StatefulSet replica count safe:
+// strconv.Atoi returns a platform-width int, so an unbounded value narrowed to
+// int32 can wrap — 4294967296 becomes 0, which would scale the probe runner to
+// zero replicas and silently stop all monitoring. It is also simply far more
+// shards than any cluster needs.
+const MaxShards = 1024
+
+// ParseShardCount reads a shard count, returning 1 for anything absent,
+// unparseable, or out of range.
+func ParseShardCount(raw string) int {
+	if raw == "" {
+		return 1
+	}
+
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < 1 {
+		return 1
+	}
+	if parsed > MaxShards {
+		return MaxShards
+	}
+
+	return parsed
+}
+
 // ShardFromEnvironment resolves this replica's shard identity.
 //
 // It fails closed to shard 0 of 1 — a single replica owning everything — so a
 // misconfigured deployment monitors too much rather than silently monitoring
 // nothing.
 func ShardFromEnvironment() (ordinal, total int) {
-	total = 1
-	if raw := os.Getenv("PULSE_PROBE_RUNNER_SHARDS"); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
-			total = parsed
-		}
-	}
+	total = ParseShardCount(os.Getenv("PULSE_PROBE_RUNNER_SHARDS"))
 
 	if total == 1 {
 		return 0, 1

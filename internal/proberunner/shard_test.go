@@ -142,3 +142,53 @@ func TestShardFromEnvironmentReadsPodOrdinal(t *testing.T) {
 		t.Fatalf("ShardFromEnvironment() = (%d, %d), want (2, 4)", ordinal, total)
 	}
 }
+
+// The shard count reaches Kubernetes as an int32 replica count. strconv.Atoi
+// returns a platform-width int, so an unbounded value narrowed to int32 can
+// wrap: 4294967296 becomes 0, which would scale the probe runner to zero
+// replicas and silently stop every check. CodeQL flagged the conversion; this
+// pins the behaviour that makes it safe.
+func TestParseShardCountRejectsOutOfRangeValues(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		raw  string
+		want int
+	}{
+		{raw: "", want: 1},
+		{raw: "1", want: 1},
+		{raw: "8", want: 8},
+		{raw: "1024", want: 1024},
+		{raw: "0", want: 1},
+		{raw: "-3", want: 1},
+		{raw: "banana", want: 1},
+		// Would wrap to 0 as an int32, scaling the StatefulSet to nothing.
+		{raw: "4294967296", want: MaxShards},
+		// Would wrap negative as an int32.
+		{raw: "2147483648", want: MaxShards},
+		{raw: "99999999999999999999", want: 1}, // overflows int itself
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.raw, func(t *testing.T) {
+			t.Parallel()
+
+			if got := ParseShardCount(testCase.raw); got != testCase.want {
+				t.Fatalf("ParseShardCount(%q) = %d, want %d", testCase.raw, got, testCase.want)
+			}
+		})
+	}
+}
+
+// Whatever the parser returns must survive narrowing to the replica count.
+func TestParseShardCountAlwaysFitsInt32(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{"", "1", "1024", "4294967296", "2147483648", "-1", "banana"} {
+		got := ParseShardCount(raw)
+		if narrowed := int32(got); int(narrowed) != got || narrowed < 1 {
+			t.Fatalf("ParseShardCount(%q) = %d, which does not survive int32 narrowing (%d)",
+				raw, got, narrowed)
+		}
+	}
+}
