@@ -285,7 +285,9 @@ spec:
       namespace: pulse-system
 ```
 
-See `config/samples/canary_v1alpha1_anomalypolicy.yaml` for every option.
+See `config/samples/canary_v1alpha1_anomalypolicy.yaml` for every option, and the
+[Model Intelligence Guide](docs/model-intelligence.html) for a from-scratch explanation of
+embeddings, cosine distance, and how a drift score is calculated and turned into a signal.
 
 > **Note on SGLang**: a single SGLang instance is either generative *or* an embedder, never
 > both. Your chat deployment is the `llm` action target; it will reject `/v1/embeddings`
@@ -309,6 +311,7 @@ See `config/samples/canary_v1alpha1_anomalypolicy.yaml` for every option.
 - [CRD Design](docs/crd-design.md) -- API schema, versioning, and how to add new CRD types
 - [HTTP Journey Guide](docs/http-journey-canary.md) -- exact runtime semantics and authoring patterns for multi-step HTTP canaries
 - [Helm Guide](docs/helm.md) -- chart install flow, private GHCR pulls, and sample probe usage
+- [Model Intelligence Guide](docs/model-intelligence.html) -- the vector maths behind drift and correlation from first principles, the deploy runbook, and operating notes (HTML; open it locally, GitHub shows the source rather than rendering it)
 - [Scaling Design](docs/scaling.md) -- how the controller handles thousands of canaries
 - [Operations Guide](docs/operations.md) -- cluster runtime model, inspection, and troubleshooting
 - [Testing and Validation](docs/testing-and-validation.md) -- automated checks and cluster smoke-test flow
