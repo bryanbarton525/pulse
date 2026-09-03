@@ -1379,6 +1379,44 @@ Normal   SuppressedByIncident  httpcanary/api-b    …</code></pre>
 
       <p>The default of <code>0.15</code> sits 2.4× above the worst healthy check and below the weakest real failure — a 3.3× gap, pinned by a regression test so a change to normalisation or the bundled model cannot quietly invalidate it. Raise it if your payloads vary more than that; lower it only with <code>consecutiveBreaches</code> raised to match.</p>
 
+      <h3>One incident, one notification</h3>
+
+      <p>An incident does not notify the instant it opens. It gains members one observation at a
+      time, and the root cause is frequently the <em>last</em> to report — an API notices an outage
+      before the database check does. So dispatch is <strong>debounced</strong>: the timer re-arms
+      each time the incident changes and the actions run once, about five seconds after it settles,
+      against the final member set and the correct root cause.</p>
+
+      <p>That five seconds is the price of not being wrong. Firing immediately would name whichever
+      canary happened to report first.</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Situation</th><th>What you get</th></tr></thead>
+          <tbody>
+            <tr><td>Five canaries fail off one backend</td><td>one notification, naming the root cause</td></tr>
+            <tr><td>A probe drifts for an hour</td><td>one notification — a refresh is not news</td></tr>
+            <tr><td>A drifting probe starts failing outright</td><td>the drift incident is superseded; the probe joins the correlated one</td></tr>
+            <tr><td>Drift turns into a latency shift</td><td>a second notification — that is a different statement</td></tr>
+            <tr><td>The same outage recurs later</td><td>throttled by <code>cooldownSeconds</code> / <code>maxPerHour</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>A probe holds <strong>at most one open incident</strong>. Without that rule a probe that was
+      already drifting could not join a correlated outage, and a shared failure fragmented into a
+      private incident per drifting probe.</p>
+
+      <h4>How incidents close</h4>
+      <ul>
+        <li><strong>Correlation incidents</strong> close when every member recovers.</li>
+        <li><strong>Drift and latency incidents</strong> close when the probe runner reports the
+        episode ended. That state lives in the runner's memory, so a restart or a resharding loses
+        it — the engine therefore also <strong>sweeps</strong> single-probe incidents that stop
+        being refreshed, after five idle minutes. Correlation incidents are never swept: a long
+        outage is still an outage.</li>
+      </ul>
+
       <h3>Baselines are in memory, and that is deliberate</h3>
       <p>Nothing derived from a response body is ever persisted. The cost is that a rollout or a reshard blinds drift detection for one warmup period, which the runner front-loads by taking its warmup samples in a burst. A practical consequence worth knowing: <strong>if you restart the runner while an endpoint is already misbehaving, the new baseline learns the broken payload as normal.</strong></p>
 
@@ -1405,12 +1443,30 @@ Normal   SuppressedByIncident  httpcanary/api-b    …</code></pre>
       <h3>Upgrading from a previous release</h3>
       <p>The probe runner became a StatefulSet but kept its name. The controller removes the old Deployment on first reconcile — this is handled, but it is the one part of the change that touches a running workload, so watch the first rollout. A Deployment of the same name that does <em>not</em> carry Pulse's labels is deliberately left alone.</p>
 
+      <h3>What has been verified in a cluster</h3>
+      <p>All of the following was exercised end to end on kind, not only in tests: the upgrade from the
+      old probe-runner Deployment to the StatefulSet, correlation across three shards, an unrelated
+      failure at the same moment staying a <em>separate</em> incident, body drift firing at 0.2036 while
+      the check kept returning 200, all four action types with their credentials, the analysis reaching
+      the canary's status, Kubernetes Events, shard partitioning with no gaps or overlaps, and the
+      Prometheus metrics.</p>
+      <p>That run is also what surfaced most of the defects the design notes above describe — the
+      actions inheriting a cancelled request context, the repeat notifications, and the incident
+      lifecycle problems were all invisible to the test suite.</p>
+
       <h3>Known rough edges</h3>
       <ul>
-        <li><code>make lint</code> is broken and was before this change: golangci-lint v2.8.0 cannot parse Go 1.27's export data. Fixing it means bumping <code>GOLANGCI_LINT_VERSION</code>. <code>go vet</code> passes.</li>
         <li>Multi-arch <code>docker-buildx</code> targets have not been exercised — only native arm64.</li>
-        <li>The engine is a single replica holding in-memory state. A restart loses open incidents and novelty clusters; the settling period covers the resulting burst.</li>
+        <li>The engine is a single replica holding in-memory state. A restart loses open incidents and
+        novelty clusters. The sweep cleans up stale drift incidents, and the settling period covers the
+        novelty burst — but a canary that is <em>already failing</em> when the engine restarts will not
+        re-report, because the runner only ships a failure on transition. Its incident stays absent until
+        it recovers and fails again.</li>
         <li>No load testing. The 12,400/sec figure is a Go benchmark, not a cluster measurement.</li>
+        <li>A custom ClusterRole must grant <code>create</code> and <code>patch</code> on
+        <code>events</code> in the <strong><code>events.k8s.io</code></strong> API group, not just the
+        core one. Granting only core lets the manager start and have every Event rejected, with the
+        Forbidden visible nowhere but its log.</li>
       </ul>
     </section>
 
