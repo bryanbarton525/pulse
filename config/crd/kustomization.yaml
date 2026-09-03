@@ -6,3 +6,5 @@
 # get its own generated file in bases/ and you'll add it here.
 resources:
 - bases/canary.iambarton.com_httpcanaries.yaml
+- bases/canary.iambarton.com_grpccanaries.yaml
+- bases/canary.iambarton.com_anomalypolicies.yaml

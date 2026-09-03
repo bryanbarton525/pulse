@@ -2,6 +2,12 @@
 IMG ?= controller:latest
 PROBE_RUNNER_IMG ?= pulse-probe-runner:latest
 PROBE_RUNNER_IMAGE ?= $(PROBE_RUNNER_IMG)
+INCIDENT_ENGINE_IMG ?= pulse-incident-engine:latest
+INCIDENT_ENGINE_IMAGE ?= $(INCIDENT_ENGINE_IMG)
+
+# Where `make fetch-models` puts converted weights. Gitignored, and baked into
+# the images at build time.
+MODELS_DIR ?= hack/models
 PROBE_RUNNER_IMAGE_PULL_SECRETS ?=
 PROBE_RUNNER_RESULTS_URL ?=
 
@@ -94,13 +100,16 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
+# GOTOOLCHAIN pins the compiler the linter type-checks against to the version
+# in go.mod. Without it, a newer Go on the host emits export data the pinned
+# golangci-lint cannot parse, and every file fails with a bogus typecheck error.
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
-	"$(GOLANGCI_LINT)" run
+	GOTOOLCHAIN=$(GO_TOOLCHAIN) "$(GOLANGCI_LINT)" run
 
 .PHONY: lint-fix
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
-	"$(GOLANGCI_LINT)" run --fix
+	GOTOOLCHAIN=$(GO_TOOLCHAIN) "$(GOLANGCI_LINT)" run --fix
 
 .PHONY: lint-config
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
@@ -110,22 +119,30 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary.
-	go build -o bin/manager cmd/main.go
+	go build -o bin/manager ./cmd
+
+.PHONY: build-incidentengine
+build-incidentengine: manifests generate fmt vet ## Build incident engine binary (no ONNX; add TAGS=onnx for the real model).
+	go build $(if $(TAGS),-tags $(TAGS),) -o bin/incident-engine ./cmd/incidentengine
+
+.PHONY: fetch-models
+fetch-models: ## Download and convert the embedding models baked into the images.
+	python3 hack/fetch-models.py $(MODELS_DIR)
 
 .PHONY: build-proberunner
 build-proberunner: manifests generate fmt vet ## Build probe runner binary.
-	go build -o bin/probe-runner cmd/proberunner/main.go
+	go build -o bin/probe-runner ./cmd/proberunner
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
 	PULSE_PROBE_RUNNER_IMAGE="$${PULSE_PROBE_RUNNER_IMAGE:-$(PROBE_RUNNER_IMAGE)}" \
 	PULSE_PROBE_RUNNER_IMAGE_PULL_SECRETS="$${PULSE_PROBE_RUNNER_IMAGE_PULL_SECRETS:-$(PROBE_RUNNER_IMAGE_PULL_SECRETS)}" \
 	PULSE_PROBE_RUNNER_RESULTS_URL="$${PULSE_PROBE_RUNNER_RESULTS_URL:-$(PROBE_RUNNER_RESULTS_URL)}" \
-	go run ./cmd/main.go
+	go run ./cmd
 
 .PHONY: run-proberunner
 run-proberunner: manifests generate fmt vet ## Run the probe runner from your host.
-	go run ./cmd/proberunner/main.go
+	go run ./cmd/proberunner
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
@@ -135,8 +152,26 @@ docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} .
 
 .PHONY: docker-build-proberunner
-docker-build-proberunner: ## Build docker image with the probe runner.
+docker-build-proberunner: models-present ## Build docker image with the probe runner.
 	$(CONTAINER_TOOL) build -f Dockerfile.proberunner -t ${PROBE_RUNNER_IMG} .
+
+.PHONY: docker-build-incidentengine
+docker-build-incidentengine: models-present ## Build docker image with the incident engine.
+	$(CONTAINER_TOOL) build -f Dockerfile.incidentengine -t ${INCIDENT_ENGINE_IMG} .
+
+.PHONY: docker-push-incidentengine
+docker-push-incidentengine: ## Push the incident engine image.
+	$(CONTAINER_TOOL) push ${INCIDENT_ENGINE_IMG}
+
+# Warn, but do not fail: an image built without weights still runs, it just
+# logs that the model could not be loaded and disables that trigger. Making
+# this fatal broke every CI job that builds an image without fetching 210 MiB
+# of weights first.
+.PHONY: models-present
+models-present:
+	@test -f $(MODELS_DIR)/potion/model.bin && test -f $(MODELS_DIR)/minilm/model.onnx \
+		|| echo "WARNING: model weights are missing, so the image will ship without them "\
+		        "and the intelligence triggers will be disabled at runtime. Run: make fetch-models"
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
@@ -162,6 +197,18 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
 	- $(CONTAINER_TOOL) buildx rm pulse-builder
 	rm Dockerfile.cross
+
+# ONNX Runtime ships binaries only for amd64 and arm64, so the incident engine
+# cannot target the full platform list the other images use.
+INCIDENT_ENGINE_PLATFORMS ?= linux/amd64,linux/arm64
+
+.PHONY: docker-buildx-incidentengine
+docker-buildx-incidentengine: models-present ## Build and push the incident engine image for amd64 and arm64.
+	- $(CONTAINER_TOOL) buildx create --name pulse-builder
+	$(CONTAINER_TOOL) buildx use pulse-builder
+	- $(CONTAINER_TOOL) buildx build --push --platform=$(INCIDENT_ENGINE_PLATFORMS) \
+		--tag ${INCIDENT_ENGINE_IMG} -f Dockerfile.incidentengine .
+	- $(CONTAINER_TOOL) buildx rm pulse-builder
 
 .PHONY: docker-buildx-proberunner
 docker-buildx-proberunner: ## Build and push probe runner image for cross-platform support
@@ -199,7 +246,8 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -
 	"$(KUBECTL)" -n pulse-system set env deployment/pulse-controller-manager \
-		PULSE_PROBE_RUNNER_IMAGE="$${PULSE_PROBE_RUNNER_IMAGE:-$(PROBE_RUNNER_IMAGE)}"
+		PULSE_PROBE_RUNNER_IMAGE="$${PULSE_PROBE_RUNNER_IMAGE:-$(PROBE_RUNNER_IMAGE)}" \
+		PULSE_INCIDENT_ENGINE_IMAGE="$${PULSE_INCIDENT_ENGINE_IMAGE:-$(INCIDENT_ENGINE_IMAGE)}"
 	@pull_secrets="$${PULSE_PROBE_RUNNER_IMAGE_PULL_SECRETS:-$(PROBE_RUNNER_IMAGE_PULL_SECRETS)}"; \
 	if [ -n "$$pull_secrets" ]; then \
 		"$(KUBECTL)" -n pulse-system set env deployment/pulse-controller-manager \
@@ -245,6 +293,10 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
 GOLANGCI_LINT_VERSION ?= v2.8.0
+# The Go version golangci-lint should type-check against, read from go.mod. A
+# newer Go on the host writes export data the pinned linter cannot parse, which
+# surfaces as every file failing with an unrelated typecheck error.
+GO_TOOLCHAIN ?= go$(shell awk '/^go /{print $$2}' go.mod)
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)

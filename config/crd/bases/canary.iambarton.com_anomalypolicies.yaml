@@ -1,0 +1,762 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: anomalypolicies.canary.iambarton.com
+spec:
+  group: canary.iambarton.com
+  names:
+    kind: AnomalyPolicy
+    listKind: AnomalyPolicyList
+    plural: anomalypolicies
+    singular: anomalypolicy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.referencedBy
+      name: Referenced
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          AnomalyPolicy is the Schema for the anomalypolicies API.
+
+          It bundles the model, triggers, topology, and actions that a set of canaries
+          share. Canaries opt in with spec.intelligence.policyRef; canaries without one
+          behave exactly as they did before this feature existed.
+
+          NOTE ON CROSS-POLICY INCIDENTS: an incident can span canaries governed by
+          different policies, because topology cuts across ownership. When that
+          happens, the effective correlation settings come from the policy of the probe
+          whose failure OPENED the incident, and the root cause's policy owns action
+          dispatch.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of AnomalyPolicy
+            properties:
+              actions:
+                description: Actions are performed, in order, when an incident opens.
+                items:
+                  description: |-
+                    AnomalyAction is one thing to do when an incident opens.
+                    Actions fire in declared order, so placing an llm action before a slack
+                    action lets the notification carry the investigation.
+                  properties:
+                    llm:
+                      description: |-
+                        LLMAction escalates an incident to a language model for root-cause analysis.
+                        One call per incident, not per canary.
+                      properties:
+                        apiKeySecretRef:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        contextChecks:
+                          default: 20
+                          description: ContextChecks is how many prior results per
+                            member to include.
+                          minimum: 0
+                          type: integer
+                        endpoint:
+                          description: Endpoint is an OpenAI-compatible chat completions
+                            URL.
+                          minLength: 1
+                          type: string
+                        maxTokens:
+                          default: 1024
+                          minimum: 1
+                          type: integer
+                        model:
+                          type: string
+                        systemPrompt:
+                          description: SystemPrompt overrides the built-in SRE prompt.
+                          type: string
+                        timeoutSeconds:
+                          default: 60
+                          minimum: 1
+                          type: integer
+                      required:
+                      - endpoint
+                      type: object
+                    name:
+                      description: Name identifies the action in metrics and logs.
+                      minLength: 1
+                      type: string
+                    observability:
+                      description: |-
+                        ObservabilityAction ships incident data to a logging or metrics backend.
+                        One HTTP poster, shaped per provider.
+                      properties:
+                        bodyTemplate:
+                          description: |-
+                            BodyTemplate is a Go template over the incident. Only honored for the
+                            generic provider.
+                          type: string
+                        credentialSecretRef:
+                          description: |-
+                            CredentialSecretRef holds the API key, token, or password for the
+                            provider. Interpretation depends on Provider.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        endpoint:
+                          minLength: 1
+                          type: string
+                        headers:
+                          additionalProperties:
+                            type: string
+                          description: Headers are extra HTTP headers. Only honored
+                            for the generic provider.
+                          type: object
+                        index:
+                          description: Index is the Elasticsearch index or Loki tenant,
+                            depending on provider.
+                          type: string
+                        provider:
+                          enum:
+                          - datadog
+                          - loki
+                          - elasticsearch
+                          - splunk
+                          - otlp
+                          - generic
+                          type: string
+                        tags:
+                          additionalProperties:
+                            type: string
+                          description: Tags are attached to every emitted record.
+                          type: object
+                        username:
+                          description: |-
+                            Username is used by providers that authenticate with basic auth
+                            (Elasticsearch, Loki behind a gateway).
+                          type: string
+                      required:
+                      - endpoint
+                      - provider
+                      type: object
+                    slack:
+                      description: SlackAction posts an incident to Slack, via incoming
+                        webhook or bot token.
+                      properties:
+                        botTokenSecretRef:
+                          description: |-
+                            BotTokenSecretRef holds a bot token for chat.postMessage. Required when
+                            Channels is set.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        channels:
+                          description: Channels to post to via chat.postMessage.
+                          items:
+                            type: string
+                          type: array
+                        includeInvestigation:
+                          description: |-
+                            IncludeInvestigation appends the LLM root-cause analysis, when an llm
+                            action ran earlier in the list.
+                          type: boolean
+                        template:
+                          description: |-
+                            Template is an optional Go template over the incident. Empty uses the
+                            built-in Block Kit message.
+                          type: string
+                        webhookSecretRef:
+                          description: WebhookSecretRef holds an incoming-webhook
+                            URL.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      type: object
+                    type:
+                      enum:
+                      - metric
+                      - llm
+                      - slack
+                      - observability
+                      type: string
+                  required:
+                  - name
+                  - type
+                  type: object
+                type: array
+              incidents:
+                description: Incidents controls notification behavior for incident
+                  members.
+                properties:
+                  notifyOnDownstream:
+                    description: |-
+                      NotifyOnDownstream sends a short "suppressed, part of incident X" note
+                      when a canary under this policy is a downstream victim rather than the
+                      root cause. Off by default — collapsing the storm is the whole point.
+                    type: boolean
+                type: object
+              model:
+                description: Model selects the embedding models. Omit for the baked-in
+                  defaults.
+                properties:
+                  cold:
+                    description: |-
+                      Cold configures the embedder used for failure correlation and novelty,
+                      which only runs on failures.
+
+                      This setting is CLUSTER-WIDE, not per-policy. Correlation merges failures
+                      across canaries governed by different policies -- a service and its
+                      database rarely share one -- by comparing their failure vectors, and
+                      vectors from different models are not comparable. If policies disagree,
+                      the incident engine resolves to one deterministically (first by policy
+                      name) and logs the ones it ignored.
+                    properties:
+                      backend:
+                        default: onnx
+                        description: |-
+                          Backend selects between the in-process ONNX runtime and an external
+                          OpenAI-compatible embeddings service.
+                        enum:
+                        - onnx
+                        - http
+                        type: string
+                      http:
+                        description: |-
+                          HTTP configures an external embeddings endpoint. Used when backend is "http".
+
+                          NOTE: this must be a server running an EMBEDDING model. A generation
+                          server (for example SGLang serving a chat model) rejects /v1/embeddings
+                          unless it was launched with --is-embedding.
+                        properties:
+                          apiKeySecretRef:
+                            description: APIKeySecretRef supplies a bearer token for
+                              the endpoint.
+                            properties:
+                              key:
+                                description: The key of the secret to select from.  Must
+                                  be a valid secret key.
+                                type: string
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              optional:
+                                description: Specify whether the Secret or its key
+                                  must be defined
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          endpoint:
+                            description: Endpoint is the full embeddings URL.
+                            minLength: 1
+                            type: string
+                          model:
+                            description: Model is the model name passed in the request
+                              body.
+                            type: string
+                        required:
+                        - endpoint
+                        type: object
+                      onnx:
+                        description: ONNX configures the in-process transformer. Used
+                          when backend is "onnx".
+                        properties:
+                          maxSequenceLength:
+                            default: 256
+                            minimum: 16
+                            type: integer
+                          modelPath:
+                            type: string
+                          vocabPath:
+                            type: string
+                        type: object
+                    type: object
+                  hot:
+                    description: |-
+                      Hot configures the embedder used on the body-drift path, which runs on
+                      every passing check.
+                    properties:
+                      backend:
+                        default: potion
+                        description: Backend selects the hot-path implementation.
+                        enum:
+                        - potion
+                        type: string
+                      maxSequenceLength:
+                        default: 256
+                        description: MaxSequenceLength caps tokens per document.
+                        minimum: 16
+                        type: integer
+                      modelPath:
+                        description: |-
+                          ModelPath is the path INSIDE the probe runner image to the converted
+                          static embedding matrix. Override it only when you have baked or mounted
+                          your own model.
+                        type: string
+                      vocabPath:
+                        description: VocabPath is the path inside the probe runner
+                          image to the tokenizer vocab.
+                        type: string
+                    type: object
+                type: object
+              throttle:
+                description: Throttle bounds action frequency.
+                properties:
+                  cooldownSeconds:
+                    default: 900
+                    minimum: 0
+                    type: integer
+                  maxPerHour:
+                    default: 4
+                    minimum: 0
+                    type: integer
+                type: object
+              topology:
+                description: Topology describes dependencies between canaries.
+                properties:
+                  dependsOn:
+                    description: |-
+                      DependsOn declares upstream edges. Entries may reference canaries governed
+                      by a different AnomalyPolicy — topology cuts across ownership.
+                    items:
+                      description: |-
+                        CanaryDependency declares that one canary depends on others.
+                        Names are "namespace/name", matching the probe key format.
+                      properties:
+                        canary:
+                          minLength: 1
+                          type: string
+                        upstream:
+                          items:
+                            type: string
+                          type: array
+                      required:
+                      - canary
+                      type: object
+                    type: array
+                  inferDependencies:
+                    description: |-
+                      InferDependencies enables co-occurrence learning over failure onsets.
+                      Learned edges are PROPOSED in status only; they never affect correlation
+                      until a human promotes one into DependsOn.
+                    type: boolean
+                  inferMinConfidence:
+                    default: "0.85"
+                    description: InferMinConfidence is the minimum confidence for
+                      a proposed edge.
+                    pattern: ^[0-9]+(\.[0-9]+)?$
+                    type: string
+                  inferMinObservations:
+                    default: 5
+                    description: |-
+                      InferMinObservations is how many times a co-occurrence must be seen
+                      before it is proposed.
+                    minimum: 2
+                    type: integer
+                type: object
+              triggers:
+                description: Triggers selects which evaluations run.
+                properties:
+                  bodyDrift:
+                    description: |-
+                      BodyDriftTrigger detects a passing check whose response body changed meaning.
+
+                      This is the only trigger that needs a learned per-probe baseline, and
+                      therefore the only one with a warmup period. Baselines live in memory and are
+                      never persisted — nothing derived from a response body leaves the probe
+                      runner pod.
+                    properties:
+                      consecutiveBreaches:
+                        default: 2
+                        description: |-
+                          ConsecutiveBreaches debounces the signal — how many drifted checks in a
+                          row before a signal is raised.
+                        minimum: 1
+                        type: integer
+                      enabled:
+                        default: true
+                        type: boolean
+                      maxBodyBytes:
+                        default: 4096
+                        description: MaxBodyBytes truncates the response body before
+                          normalization.
+                        minimum: 256
+                        type: integer
+                      redact:
+                        description: |-
+                          Redact is a list of regular expressions stripped from the body BEFORE it
+                          is embedded or logged. Use it for anything the model should never see.
+                        items:
+                          type: string
+                        type: array
+                      sampleEvery:
+                        default: 1
+                        description: |-
+                          SampleEvery embeds only every Nth passing check. Raise it if the hot path
+                          ever becomes CPU-bound; drift moves over hours, so coarse sampling is
+                          usually harmless.
+                        minimum: 1
+                        type: integer
+                      threshold:
+                        default: "0.15"
+                        description: "Threshold is the cosine distance from the baseline
+                          above which a body is\nconsidered drifted. Expressed as
+                          a decimal string to keep floats out of\nthe CRD schema.\n\nThe
+                          default is derived from measurements against the bundled
+                          model, on a\nJSON payload whose item count, field values,
+                          and timestamps all vary\nbetween checks:\n\n\thealthy variation
+                          \  median 0.015, p95 0.052, max 0.063\n\tempty result set
+                          \   0.200\n\ttruncated JSON      0.204\n\tnull collection
+                          \    0.286\n\tstack trace in 200  0.473\n\tmaintenance page
+                          \   0.591\n\n0.15 sits roughly 2.4x above the healthy maximum
+                          and below the weakest\nreal failure. Raise it if your payloads
+                          vary more than the above; lower\nit only with ConsecutiveBreaches
+                          raised to match."
+                        pattern: ^[0-9]+(\.[0-9]+)?$
+                        type: string
+                      warmupChecks:
+                        default: 20
+                        description: |-
+                          WarmupChecks is how many samples must be observed before scoring is
+                          trusted. The runner collects these in a fast burst on startup rather than
+                          waiting on the probe interval.
+                        minimum: 2
+                        type: integer
+                    type: object
+                  failureCorrelation:
+                    description: |-
+                      FailureCorrelationTrigger merges concurrent failures into a single incident.
+
+                      The candidate set is every concurrent failure in the cluster, regardless of
+                      which policy or namespace each canary belongs to — a service and its database
+                      will rarely share a policy, and they are exactly the pair worth correlating.
+                      A merge requires EVIDENCE: a declared dependency edge, a promoted inferred
+                      edge, or failure text that is semantically near-identical. Two unrelated
+                      things failing at the same moment stay two incidents.
+                    properties:
+                      candidateSelector:
+                        description: |-
+                          CandidateSelector optionally narrows which canaries may correlate with
+                          each other. This is a guardrail for hard boundaries (never mix dev with
+                          prod), not the primary mechanism — evidence gating is.
+                        properties:
+                          matchExpressions:
+                            description: matchExpressions is a list of label selector
+                              requirements. The requirements are ANDed.
+                            items:
+                              description: |-
+                                A label selector requirement is a selector that contains values, a key, and an operator that
+                                relates the key and values.
+                              properties:
+                                key:
+                                  description: key is the label key that the selector
+                                    applies to.
+                                  type: string
+                                operator:
+                                  description: |-
+                                    operator represents a key's relationship to a set of values.
+                                    Valid operators are In, NotIn, Exists and DoesNotExist.
+                                  type: string
+                                values:
+                                  description: |-
+                                    values is an array of string values. If the operator is In or NotIn,
+                                    the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                    the values array must be empty. This array is replaced during a strategic
+                                    merge patch.
+                                  items:
+                                    type: string
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                              required:
+                              - key
+                              - operator
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          matchLabels:
+                            additionalProperties:
+                              type: string
+                            description: |-
+                              matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                              map is equivalent to an element of matchExpressions, whose key field is "key", the
+                              operator is "In", and the values array contains only "value". The requirements are ANDed.
+                            type: object
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      enabled:
+                        default: true
+                        type: boolean
+                      similarityThreshold:
+                        default: "0.85"
+                        description: |-
+                          SimilarityThreshold is the cosine similarity between two failure
+                          observations above which they count as evidence of a shared cause.
+                        pattern: ^[0-9]+(\.[0-9]+)?$
+                        type: string
+                      windowSeconds:
+                        default: 120
+                        description: WindowSeconds is how far apart two failures can
+                          be and still correlate.
+                        minimum: 5
+                        type: integer
+                    type: object
+                  failureNovelty:
+                    description: |-
+                      FailureNoveltyTrigger decides whether a failure shape has been seen before.
+                      This is a routing function, not detection: new shapes earn an investigation,
+                      the four hundredth repeat of a known one just increments a counter.
+                    properties:
+                      clusterThreshold:
+                        default: "0.80"
+                        description: |-
+                          ClusterThreshold is the cosine similarity above which a failure joins an
+                          existing cluster instead of forming a new one.
+                        pattern: ^[0-9]+(\.[0-9]+)?$
+                        type: string
+                      enabled:
+                        default: true
+                        type: boolean
+                      settlingPeriodSeconds:
+                        default: 300
+                        description: |-
+                          SettlingPeriodSeconds suppresses novelty escalation after the incident
+                          engine starts. The cluster set is in-memory, so immediately after a
+                          restart every failure looks new.
+                        minimum: 0
+                        type: integer
+                    type: object
+                  latencyShift:
+                    description: |-
+                      LatencyShiftTrigger detects a passing check that is getting slower.
+                      No model is involved — this is an EWMA mean and variance over check duration.
+                    properties:
+                      consecutiveBreaches:
+                        default: 3
+                        minimum: 1
+                        type: integer
+                      enabled:
+                        default: true
+                        type: boolean
+                      warmupChecks:
+                        default: 30
+                        minimum: 2
+                        type: integer
+                      zScoreThreshold:
+                        default: "3.0"
+                        description: |-
+                          ZScoreThreshold is how many standard deviations above the rolling mean
+                          counts as a shift.
+                        pattern: ^[0-9]+(\.[0-9]+)?$
+                        type: string
+                    type: object
+                type: object
+            type: object
+          status:
+            description: status defines the observed state of AnomalyPolicy
+            properties:
+              conditions:
+                description: conditions represent the current state of the AnomalyPolicy
+                  resource.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              inferredDependencies:
+                description: |-
+                  InferredDependencies are proposed edges awaiting human review. They do not
+                  affect correlation until promoted into spec.topology.dependsOn.
+                items:
+                  description: |-
+                    InferredDependency is a co-occurrence edge the engine learned but has NOT
+                    acted on. Promote it by copying it into spec.topology.dependsOn.
+                  properties:
+                    confidence:
+                      description: Confidence is the fraction of To's failures preceded
+                        by a From failure.
+                      type: string
+                    from:
+                      description: From is the proposed upstream canary ("namespace/name").
+                      type: string
+                    lastObserved:
+                      format: date-time
+                      type: string
+                    observations:
+                      description: Observations is how many times the co-occurrence
+                        was seen.
+                      type: integer
+                    to:
+                      description: To is the proposed downstream canary ("namespace/name").
+                      type: string
+                  required:
+                  - from
+                  - to
+                  type: object
+                type: array
+              referencedBy:
+                description: ReferencedBy counts canaries currently using this policy.
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

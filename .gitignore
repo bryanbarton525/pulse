@@ -28,3 +28,16 @@ go.work
 
 # Kubeconfig might contain secrets
 *.kubeconfig
+
+# Downloaded and converted model weights (see `make fetch-models`), but keep
+# the directories themselves so the image builds always have something to COPY.
+hack/models/**
+!hack/models/potion/
+!hack/models/minilm/
+!hack/models/*/.gitkeep
+
+# Binaries built directly into the repo root by `go build ./cmd/<name>/`.
+# The Makefile targets write to bin/ instead.
+/manager
+/probe-runner
+/incidentengine

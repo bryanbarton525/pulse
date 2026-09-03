@@ -5,6 +5,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// Canary status phases. These match the Enum markers on the status fields of
+// both HttpCanary and GrpcCanary.
+const (
+	PhaseHealthy   = "Healthy"
+	PhaseUnhealthy = "Unhealthy"
+	PhaseUnknown   = "Unknown"
+)
+
 const (
 	HttpCanaryOutputPrometheus = "prometheus"
 	HttpCanaryOutputStdout     = "stdout"
@@ -168,6 +176,12 @@ type HttpCanarySpec struct {
 	// Outputs controls where probe execution telemetry is emitted.
 	// When omitted, the canary emits Prometheus metrics for backward compatibility.
 	Outputs []HttpCanaryOutput `json:"outputs,omitempty"`
+
+	// Intelligence opts this canary into model-driven evaluation: body drift on
+	// passing checks, latency shift, and correlation of its failures with other
+	// canaries. Omit it and the canary behaves exactly as it always has.
+	// +optional
+	Intelligence *CanaryIntelligence `json:"intelligence,omitempty"`
 }
 
 // HttpCanaryStatus defines the observed state of HttpCanary.
@@ -185,6 +199,11 @@ type HttpCanaryStatus struct {
 
 	// Message provides human-readable detail about the current state.
 	Message string `json:"message,omitempty"`
+
+	// Intelligence reports what the model concluded about this canary.
+	// Only populated when spec.intelligence is set.
+	// +optional
+	Intelligence *CanaryIntelligenceStatus `json:"intelligence,omitempty"`
 }
 
 // +kubebuilder:object:root=true

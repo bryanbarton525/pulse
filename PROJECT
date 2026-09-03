@@ -12,4 +12,23 @@ plugins:
     output: dist
 projectName: pulse
 repo: github.com/bryanbarton525/pulse
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: iambarton.com
+  group: canary
+  kind: GrpcCanary
+  path: github.com/bryanbarton525/pulse/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: iambarton.com
+  group: canary
+  kind: AnomalyPolicy
+  path: github.com/bryanbarton525/pulse/api/v1alpha1
+  version: v1alpha1
 version: "3"

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -54,6 +56,15 @@ type StatusSyncer struct {
 	// runner. This is primarily useful for local controller runs that need to
 	// talk to a port-forwarded or otherwise externally reachable runner.
 	ResultsURL string
+
+	// IncidentEngineURL overrides the default in-cluster address of the
+	// incident engine, for the same local-development reason.
+	IncidentEngineURL string
+
+	// Recorder emits Kubernetes Events for incidents. The probe runner and the
+	// incident engine deliberately hold no Kubernetes client, so this is the
+	// only component that can put an incident on `kubectl describe`.
+	Recorder events.EventRecorder
 }
 
 // Start implements manager.Runnable. The manager calls this in a goroutine
@@ -109,7 +120,12 @@ func (s *StatusSyncer) syncAllStatuses(ctx context.Context) {
 	var canaryList canaryv1alpha1.HttpCanaryList
 	if err := s.List(ctx, &canaryList); err != nil {
 		logger.Error(err, "Failed to list HttpCanary resources for status sync")
-		return
+	}
+
+	// ── List all GrpcCanary CRs ──────────────────────────
+	var grpcCanaryList canaryv1alpha1.GrpcCanaryList
+	if err := s.List(ctx, &grpcCanaryList); err != nil {
+		logger.Error(err, "Failed to list GrpcCanary resources for status sync")
 	}
 
 	// ── Update each CR's status ──────────────────────────
@@ -123,17 +139,14 @@ func (s *StatusSyncer) syncAllStatuses(ctx context.Context) {
 			continue
 		}
 
-		// Only update if something actually changed. This avoids
-		// unnecessary writes to the API server, which matters at
-		// scale (1,000+ CRs).
 		if !s.statusChanged(canary, res) {
 			continue
 		}
 
 		if res.Healthy {
-			canary.Status.Phase = "Healthy"
+			canary.Status.Phase = canaryv1alpha1.PhaseHealthy
 		} else {
-			canary.Status.Phase = "Unhealthy"
+			canary.Status.Phase = canaryv1alpha1.PhaseUnhealthy
 		}
 		canary.Status.LastStatus = res.StatusCode
 		canary.Status.Message = res.Message
@@ -143,7 +156,6 @@ func (s *StatusSyncer) syncAllStatuses(ctx context.Context) {
 
 		if err := s.Status().Update(ctx, canary); err != nil {
 			if errors.IsNotFound(err) {
-				// CR was deleted between our List and this Update. Normal.
 				continue
 			}
 			logger.Error(err, "Failed to update status", "canary", key)
@@ -152,9 +164,48 @@ func (s *StatusSyncer) syncAllStatuses(ctx context.Context) {
 		updated++
 	}
 
+	for i := range grpcCanaryList.Items {
+		canary := &grpcCanaryList.Items[i]
+		key := fmt.Sprintf("%s/%s", canary.Namespace, canary.Name)
+
+		res, found := resultMap[key]
+		if !found {
+			continue
+		}
+
+		if !s.grpcStatusChanged(canary, res) {
+			continue
+		}
+
+		if res.Healthy {
+			canary.Status.Phase = canaryv1alpha1.PhaseHealthy
+		} else {
+			canary.Status.Phase = canaryv1alpha1.PhaseUnhealthy
+		}
+		canary.Status.LastStatus = res.StatusCode
+		canary.Status.Message = res.Message
+
+		checkTime := metav1.NewTime(res.LastCheckTime)
+		canary.Status.LastCheckTime = &checkTime
+
+		if err := s.Status().Update(ctx, canary); err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			logger.Error(err, "Failed to update status", "grpccanary", key)
+			continue
+		}
+		updated++
+	}
+
+	// Incidents are synced after results so a canary's phase and its incident
+	// membership land in the same cycle.
+	s.syncIncidents(ctx)
+
 	logger.Info("Status sync complete",
 		"resultsReceived", len(results),
-		"canariesChecked", len(canaryList.Items),
+		"httpCanariesChecked", len(canaryList.Items),
+		"grpcCanariesChecked", len(grpcCanaryList.Items),
 		"statusesUpdated", updated,
 	)
 }
@@ -167,9 +218,9 @@ func (s *StatusSyncer) syncAllStatuses(ctx context.Context) {
 // writes/minute. If most probes are stable (Healthy → Healthy), skipping
 // unchanged statuses drops this to near zero during steady state.
 func (s *StatusSyncer) statusChanged(canary *canaryv1alpha1.HttpCanary, res proberunner.ProbeResult) bool {
-	expectedPhase := "Unhealthy"
+	expectedPhase := canaryv1alpha1.PhaseUnhealthy
 	if res.Healthy {
-		expectedPhase = "Healthy"
+		expectedPhase = canaryv1alpha1.PhaseHealthy
 	}
 
 	return canary.Status.Phase != expectedPhase ||
@@ -177,10 +228,90 @@ func (s *StatusSyncer) statusChanged(canary *canaryv1alpha1.HttpCanary, res prob
 		canary.Status.Message != res.Message
 }
 
-// fetchResults calls GET /results on the probe runner Service.
-func (s *StatusSyncer) fetchResults() ([]proberunner.ProbeResult, error) {
-	url := s.probeRunnerResultsURL()
+func (s *StatusSyncer) grpcStatusChanged(canary *canaryv1alpha1.GrpcCanary, res proberunner.ProbeResult) bool {
+	expectedPhase := canaryv1alpha1.PhaseUnhealthy
+	if res.Healthy {
+		expectedPhase = canaryv1alpha1.PhaseHealthy
+	}
 
+	return canary.Status.Phase != expectedPhase ||
+		canary.Status.LastStatus != res.StatusCode ||
+		canary.Status.Message != res.Message
+}
+
+// fetchResults retrieves a COMPLETE view of probe results.
+//
+// Completeness is the whole point of this function, and it must not depend on
+// whether the intelligence feature is enabled. Three sources, in order:
+//
+//  1. an explicit override, for local development against a port-forward;
+//  2. the incident engine, which aggregates every shard's pushed snapshot;
+//  3. the probe runners themselves -- the ClusterIP Service when there is a
+//     single replica, or every replica's own address when sharded.
+//
+// The engine is preferred but never required: it is only deployed when a canary
+// opts into intelligence, and it must not become a hidden dependency of plain
+// status reporting.
+func (s *StatusSyncer) fetchResults() ([]proberunner.ProbeResult, error) {
+	if s.ResultsURL != "" {
+		return s.fetchResultsFrom(s.ResultsURL)
+	}
+
+	if results, err := s.fetchResultsFrom(s.incidentEngineURL() + "/results"); err == nil && len(results) > 0 {
+		return results, nil
+	}
+
+	shards := probeRunnerShards()
+	if shards <= 1 {
+		return s.fetchResultsFrom(s.probeRunnerResultsURL())
+	}
+
+	return s.fetchShardedResults(int(shards))
+}
+
+// fetchShardedResults polls every replica and merges what comes back.
+//
+// A replica that cannot be reached is logged and skipped rather than failing
+// the cycle. Missing results are safe: syncAllStatuses only touches canaries it
+// has a result for, so an unreachable shard leaves its canaries at their
+// previous status instead of corrupting them. Falling back to a single
+// arbitrary shard, by contrast, would silently starve every other shard's
+// canaries of updates.
+func (s *StatusSyncer) fetchShardedResults(shards int) ([]proberunner.ProbeResult, error) {
+	merged := make(map[string]proberunner.ProbeResult)
+	reached := 0
+	var lastErr error
+
+	for _, url := range s.shardResultsURLs(shards) {
+		results, err := s.fetchResultsFrom(url)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		reached++
+		for _, result := range results {
+			merged[result.Name] = result
+		}
+	}
+
+	if reached == 0 {
+		if lastErr != nil {
+			return nil, fmt.Errorf("no probe runner replica could be reached: %w", lastErr)
+		}
+		return nil, nil
+	}
+
+	combined := make([]proberunner.ProbeResult, 0, len(merged))
+	for _, result := range merged {
+		combined = append(combined, result)
+	}
+	sort.Slice(combined, func(i, j int) bool { return combined[i].Name < combined[j].Name })
+
+	return combined, nil
+}
+
+func (s *StatusSyncer) fetchResultsFrom(url string) ([]proberunner.ProbeResult, error) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 	resp, err := httpClient.Get(url)
 	if err != nil {
@@ -209,4 +340,23 @@ func (s *StatusSyncer) probeRunnerResultsURL() string {
 
 	return fmt.Sprintf("http://%s.%s.svc:%d/results",
 		ProbeRunnerName, s.Namespace, ProbeRunnerPort)
+}
+
+// shardResultsURLs addresses every probe runner replica directly.
+//
+// StatefulSet pods have predictable DNS -- <name>-<ordinal>.<headless>.<ns>.svc
+// -- so the full set can be derived from the replica count with no endpoint
+// discovery.
+//
+// This exists because the ClusterIP Service is the WRONG source once sharding
+// is on: it load-balances to one arbitrary replica, and a replica only knows
+// its own slice of the probes. Polling it leaves the canaries owned by every
+// other shard updating only when the balancer happens to pick their pod.
+func (s *StatusSyncer) shardResultsURLs(shards int) []string {
+	urls := make([]string, 0, shards)
+	for ordinal := range shards {
+		urls = append(urls, fmt.Sprintf("http://%s-%d.%s.%s.svc:%d/results",
+			ProbeRunnerName, ordinal, ProbeRunnerHeadlessName, s.Namespace, ProbeRunnerPort))
+	}
+	return urls
 }

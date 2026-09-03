@@ -1,0 +1,7 @@
+## Append samples of your project ##
+resources:
+- canary_v1alpha1_grpccanary.yaml
+- canary_v1alpha1_anomalypolicy.yaml
+- canary_v1alpha1_anomalypolicy_minimal.yaml
+- canary_v1alpha1_httpcanary_intelligent.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

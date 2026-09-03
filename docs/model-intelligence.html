@@ -1,0 +1,1476 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="How Pulse's two embedding models work, the vector maths behind drift and correlation, and how to deploy and operate the model intelligence layer.">
+<title>Pulse Model Intelligence</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    /* Light palette. Neutrals carry a slight blue bias toward the cold accent
+       so nothing reads as unconsidered mid-grey. */
+    --ground:      #F5F7F9;
+    --surface:     #FFFFFF;
+    --surface-alt: #EEF2F5;
+    --ink:         #16212C;
+    --ink-soft:    #3D4C5A;
+    --muted:       #64798C;
+    --rule:        #D8E0E7;
+    --rule-strong: #B9C6D1;
+
+    /* Semantic, not decorative: warm is the hot path, cool is the cold path.
+       These two hues carry meaning everywhere they appear on the page. */
+    --hot:      #B4541C;
+    --hot-soft: #F4E5DB;
+    --cold:      #216F84;
+    --cold-soft: #DCEBEF;
+
+    --warn: #8A6510;
+    --code-bg: #16212C;
+    --code-ink: #DCE6EE;
+
+    --measure: 68ch;
+    --step--1: 0.83rem;
+    --step-0:  1rem;
+    --step-1:  1.22rem;
+    --step-2:  1.55rem;
+    --step-3:  2.05rem;
+    --step-4:  2.75rem;
+  }
+
+  /* Un-stamped documents (the default "system" setting) resolve here. The
+     media query must wrap the selector, not the other way round. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0E1620;
+      --surface:     #16202B;
+      --surface-alt: #1D2A37;
+      --ink:         #E4EBF1;
+      --ink-soft:    #B7C4CF;
+      --muted:       #8496A6;
+      --rule:        #263543;
+      --rule-strong: #35485A;
+
+      --hot:      #E4884F;
+      --hot-soft: #33221A;
+      --cold:      #63B8CE;
+      --cold-soft: #122A32;
+
+      --warn: #D5A648;
+      --code-bg: #080D13;
+      --code-ink: #D3DFE9;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #0E1620;
+    --surface:     #16202B;
+    --surface-alt: #1D2A37;
+    --ink:         #E4EBF1;
+    --ink-soft:    #B7C4CF;
+    --muted:       #8496A6;
+    --rule:        #263543;
+    --rule-strong: #35485A;
+
+    --hot:      #E4884F;
+    --hot-soft: #33221A;
+    --cold:      #63B8CE;
+    --cold-soft: #122A32;
+
+    --warn: #D5A648;
+    --code-bg: #080D13;
+    --code-ink: #D3DFE9;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: var(--step-0);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 1160px;
+    margin: 0 auto;
+    padding: 0 clamp(1.1rem, 4vw, 3rem) 6rem;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0 3.5rem;
+  }
+
+  @media (min-width: 1080px) {
+    .page { grid-template-columns: 200px minmax(0, 1fr); }
+    /* The masthead spans both columns; the nav and the article then share the
+       row beneath it. Letting .flow span 1/-1 as well pushes the nav onto its
+       own row, which stacks the contents list above the article instead of
+       beside it. */
+    .masthead { grid-column: 1 / -1; }
+    nav.toc   { grid-column: 1; grid-row: 2; }
+    .flow     { grid-column: 2; grid-row: 2; }
+  }
+
+  /* ---- masthead ---- */
+
+  .masthead {
+    padding: clamp(3rem, 8vw, 5.5rem) 0 2.5rem;
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 3rem;
+  }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: var(--step--1);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 1.1rem;
+  }
+
+  h1 {
+    font-family: Newsreader, Georgia, serif;
+    font-weight: 500;
+    font-size: clamp(2.4rem, 6vw, var(--step-4));
+    line-height: 1.08;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+    margin: 0 0 1.1rem;
+  }
+
+  .standfirst {
+    font-family: Newsreader, Georgia, serif;
+    font-size: var(--step-1);
+    line-height: 1.55;
+    color: var(--ink-soft);
+    max-width: 58ch;
+    margin: 0;
+  }
+
+  .standfirst em { font-style: italic; color: var(--ink); }
+
+  /* ---- side nav ---- */
+
+  nav.toc { display: none; }
+
+  @media (min-width: 1080px) {
+    nav.toc {
+      display: block;
+      position: sticky;
+      top: 2rem;
+      align-self: start;
+      padding-top: 0.4rem;
+    }
+    nav.toc ol {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+      border-left: 1px solid var(--rule);
+    }
+    nav.toc a {
+      display: block;
+      padding-left: 0.9rem;
+      margin-left: -1px;
+      border-left: 2px solid transparent;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: var(--step--1);
+      line-height: 1.4;
+      color: var(--muted);
+      text-decoration: none;
+    }
+    nav.toc a:hover,
+    nav.toc a:focus-visible { color: var(--ink); border-left-color: var(--cold); }
+  }
+
+  /* ---- flow ---- */
+
+  /* Spacing inside a section comes from flex gap, not from margins on each
+     element. The previous `.flow > * + *` only matched the sections themselves,
+     so paragraphs inside them collapsed to zero — and because a class selector
+     outranks `section + section`, it also silently shrank the gap between
+     sections from 4.5rem to 1.15rem. */
+  .flow { display: flex; flex-direction: column; }
+  .flow p, .flow ul, .flow ol { max-width: var(--measure); }
+
+  section {
+    scroll-margin-top: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.15rem;
+  }
+  section + section { margin-top: 4.5rem; }
+
+  h2 {
+    font-family: Newsreader, Georgia, serif;
+    font-weight: 500;
+    font-size: var(--step-3);
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    margin: 0;
+    padding-top: 1.6rem;
+    border-top: 2px solid var(--ink);
+  }
+
+  h3 {
+    font-size: var(--step-1);
+    font-weight: 600;
+    line-height: 1.3;
+    margin: 1.5rem 0 0;
+    text-wrap: balance;
+  }
+
+  h4 {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: var(--step--1);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0.9rem 0 0;
+  }
+
+  p { margin: 0; }
+  a { color: var(--cold); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  :focus-visible { outline: 2px solid var(--cold); outline-offset: 2px; border-radius: 2px; }
+
+  strong { font-weight: 600; }
+
+  code {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.88em;
+    background: var(--surface-alt);
+    padding: 0.1em 0.36em;
+    border-radius: 3px;
+  }
+
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: var(--step--1);
+    line-height: 1.6;
+    padding: 1.15rem 1.3rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 0;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre .c { color: #7E93A5; }
+  pre .k { color: #E4884F; }
+
+  ul, ol { padding-left: 1.2rem; margin: 0; }
+  li + li { margin-top: 0.4rem; }
+  li::marker { color: var(--muted); }
+
+  /* ---- tables ---- */
+
+  .table-wrap { overflow-x: auto; margin: 0; }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 460px;
+    font-size: var(--step--1);
+  }
+  th, td {
+    text-align: left;
+    padding: 0.62rem 0.9rem 0.62rem 0;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  th {
+    font-family: "IBM Plex Mono", monospace;
+    font-weight: 600;
+    font-size: 0.78rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom-color: var(--rule-strong);
+    white-space: nowrap;
+  }
+  td.num, th.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  /* ---- figures ---- */
+
+  figure {
+    margin: 2rem 0;
+    padding: 1.5rem 1.5rem 1.2rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    overflow-x: auto;
+  }
+  figure svg { display: block; max-width: 100%; height: auto; color: var(--ink); }
+  figcaption {
+    margin-top: 1.1rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--rule);
+    font-size: var(--step--1);
+    line-height: 1.55;
+    color: var(--muted);
+    max-width: 74ch;
+  }
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ---- path chips: the page's one repeating encoding ---- */
+
+  .chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.4em;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 0.18em 0.55em;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .chip.hot  { background: var(--hot-soft);  color: var(--hot); }
+  .chip.cold { background: var(--cold-soft); color: var(--cold); }
+
+  .lede-hot  { border-left: 3px solid var(--hot); }
+  .lede-cold { border-left: 3px solid var(--cold); }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 1.3rem 1.5rem;
+  }
+  .panel > * + * { margin-top: 0.8rem; }
+  .panel h4 { margin-top: 0; }
+
+  .note {
+    padding: 1.1rem 1.3rem;
+    background: var(--surface-alt);
+    border-left: 3px solid var(--warn);
+    border-radius: 0 6px 6px 0;
+    font-size: 0.94rem;
+  }
+  .note > * + * { margin-top: 0.6rem; }
+  .note strong { color: var(--ink); }
+
+  .callout {
+    font-family: Newsreader, Georgia, serif;
+    font-size: var(--step-2);
+    line-height: 1.4;
+    color: var(--ink);
+    max-width: 30ch;
+    margin: 2.2rem 0;
+    padding-left: 1.3rem;
+    border-left: 3px solid var(--rule-strong);
+    text-wrap: balance;
+  }
+
+  .split {
+    display: grid;
+    gap: 1.2rem;
+    grid-template-columns: 1fr;
+    max-width: none;
+  }
+  @media (min-width: 720px) { .split { grid-template-columns: 1fr 1fr; } }
+
+  .steps { counter-reset: step; list-style: none; padding: 0; }
+  .steps > li {
+    counter-increment: step;
+    position: relative;
+    padding-left: 2.6rem;
+    margin-top: 2rem;
+  }
+  .steps > li::before {
+    content: counter(step, decimal-leading-zero);
+    position: absolute;
+    left: 0;
+    top: 0.05rem;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--cold);
+    letter-spacing: 0.04em;
+  }
+  .steps > li > * + * { margin-top: 0.7rem; }
+  .steps h3 { margin-top: 0; }
+
+  .eq {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.95rem;
+    line-height: 2;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 1rem 1.3rem;
+    overflow-x: auto;
+    white-space: pre;
+    color: var(--ink);
+  }
+  .eq b { color: var(--cold); font-weight: 600; }
+  .eq i { color: var(--muted); font-style: normal; }
+
+  dl.terms { margin: 0; display: grid; gap: 0.9rem; max-width: var(--measure); }
+  dl.terms > div { display: grid; gap: 0.15rem; }
+  dl.terms dt {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.86rem;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  dl.terms dd { margin: 0; color: var(--ink-soft); font-size: 0.95rem; }
+
+  .ruler {
+    display: grid;
+    gap: 0;
+    margin: 1.4rem 0;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: var(--step--1);
+    max-width: var(--measure);
+  }
+  .ruler div {
+    display: grid;
+    grid-template-columns: 4.5rem 1fr;
+    gap: 1rem;
+    align-items: baseline;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .ruler div:last-child { border-bottom: none; }
+  .ruler span:first-child { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .ruler .lo span:first-child { color: var(--cold); }
+  .ruler .hi span:first-child { color: var(--hot); }
+  .ruler em { font-style: normal; color: var(--ink-soft); font-family: "IBM Plex Sans", sans-serif; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">Pulse&nbsp;/ operator guide</p>
+    <h1>Model intelligence in Pulse</h1>
+    <p class="standfirst">What actually got built, how to run it, and why one model lives inside the probe runner while the other lives somewhere else entirely. The short version of that last part: <em>where the text becomes a vector decides what leaves the pod.</em></p>
+  </header>
+
+  <nav class="toc" aria-label="Sections">
+    <ol>
+      <li><a href="#what">What it does</a></li>
+      <li><a href="#triggers">Four triggers</a></li>
+      <li><a href="#math">How the math works</a></li>
+      <li><a href="#shape">Moving parts</a></li>
+      <li><a href="#flow">Two models, two flows</a></li>
+      <li><a href="#deploy">Deploying it</a></li>
+      <li><a href="#use">Using it</a></li>
+      <li><a href="#operate">Operating notes</a></li>
+    </ol>
+  </nav>
+
+  <main class="flow">
+
+    <!-- ============================================================ -->
+    <section id="what">
+      <h2>What it does</h2>
+      <p>Pulse was a pass/fail synthetic monitor. A canary declared <code>expectedStatus: 200</code>, the runner checked it, and the CR got <code>Healthy</code> or <code>Unhealthy</code>. Nothing else happened — no notification, no correlation, no history.</p>
+
+      <p>This adds an opt-in layer that reads the check results with embedded models. It is genuinely optional: a canary with no <code>spec.intelligence</code> behaves exactly as before, and a cluster with no <code>AnomalyPolicy</code> deploys no extra pods.</p>
+
+      <h3>Why it does not "detect anomalous failures"</h3>
+      <p>This is worth understanding before anything else, because it shapes every design decision below.</p>
+
+      <p>A canary's failure is <strong>deterministic by construction</strong>. It fails when your assertion says it should. The runner builds those failure messages from a handful of format strings, so once volatile tokens are masked away, <code>Expected 200 but got 503</code> and <code>Expected 200 but got 502</code> are the <em>same string</em>. Scoring them with a 384-dimensional model to decide whether they are "unusual" is a <code>switch</code> statement in an expensive costume.</p>
+
+      <p>The signal is in two places your assertions cannot reach:</p>
+      <ul>
+        <li><strong>The response body</strong>, which the runner used to read and immediately throw away.</li>
+        <li><strong>The relationships between concurrent failures</strong>, which nothing tracked at all.</li>
+      </ul>
+
+      <p class="callout">The model watches the checks your assertions say are fine.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="triggers">
+      <h2>Four triggers</h2>
+      <p>None of them claim a deterministic result is anomalous. Each asks a question the assertion cannot answer.</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Trigger</th><th>Question</th><th>Fires on</th><th>Path</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>bodyDrift</code></td>
+              <td>The check <strong>passed</strong> — did the body's meaning change anyway?</td>
+              <td>every passing check</td>
+              <td><span class="chip hot">hot</span></td>
+            </tr>
+            <tr>
+              <td><code>latencyShift</code></td>
+              <td>Green, but getting slower?</td>
+              <td>every check</td>
+              <td><span class="chip hot">hot</span></td>
+            </tr>
+            <tr>
+              <td><code>failureCorrelation</code></td>
+              <td>Is this one incident or five? Which is the root cause?</td>
+              <td>failures only</td>
+              <td><span class="chip cold">cold</span></td>
+            </tr>
+            <tr>
+              <td><code>failureNovelty</code></td>
+              <td>Have we seen this failure shape before?</td>
+              <td>failures only</td>
+              <td><span class="chip cold">cold</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The first two catch <strong>green-but-wrong</strong>: an emptied result set, a stack trace inside a 200, a maintenance page served with the right status code, a p99 creeping upward. You cannot pre-write an assertion for these because you do not know in advance what wrong will look like.</p>
+
+      <p>The last two do <strong>triage</strong>: collapse a storm into one incident with one investigation, and keep the four-hundredth repeat of a known failure quiet.</p>
+
+      <h3>Correlation merges on evidence, never on timing</h3>
+      <p>Two canaries failing at the same moment is <em>not</em> evidence of anything — in a cluster of a few thousand checks, unrelated things fail together constantly. A merge requires an actual reason:</p>
+      <ol>
+        <li>a declared dependency in <code>spec.topology.dependsOn</code>, or</li>
+        <li>failure text showing both checks hit the same wall — two canaries with no declared relationship both reporting an identical dial timeout are telling you they share an upstream nobody wrote down.</li>
+      </ol>
+
+      <p>Because the gate is <em>evidence</em> rather than <em>configuration</em>, correlation works across canaries governed by different policies. That matters: policies follow team ownership, but outages follow infrastructure, and your payments canary and its database canary are rarely owned by the same team.</p>
+
+      <p>Pulse also <em>learns</em> dependency edges from co-occurrence, but only ever proposes them in <code>AnomalyPolicy.status.inferredDependencies</code>. A proposal never affects merging until you copy it into <code>dependsOn</code> yourself. Co-occurrence is not causation, and an edge that silently redirected blame would send someone to debug the wrong service at 3am.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="math">
+      <h2>How the math works</h2>
+
+      <p>Everything above rests on one operation, applied three different ways. It is worth building up from nothing, because once the operation is clear the thresholds stop looking arbitrary.</p>
+
+      <h3>What the drift score is actually for</h3>
+
+      <p>Start with the problem, because the arithmetic only makes sense against it.</p>
+
+      <p>An assertion can only check for something you thought of in advance. <code>expectedStatus: 200</code> catches the endpoint being down. <code>containsText: "widget"</code> catches that one string disappearing. Neither catches the response that is <em>structurally fine and semantically wrong</em> — the list that silently went empty, the JSON that became an HTML error page, the object that started returning a stack trace with a 200 on it. You cannot write an assertion for a failure mode you have not imagined yet.</p>
+
+      <p>The drift score replaces "does this match what I predicted?" with a different question: <strong>"does this look like what this endpoint has been returning?"</strong> That question needs no prediction, because the endpoint's own recent history supplies the answer.</p>
+
+      <p>So the score is a single number answering: <em>how far has this response moved from normal for this probe?</em> Its job is to be near zero for a healthy endpoint that is merely varying, and to climb sharply when the meaning of the payload changes — with enough separation between those two states that a fixed threshold can tell them apart.</p>
+
+      <p class="callout">A green check with a rising drift score is the case that motivates all of this.</p>
+
+      <h3>Step one: text becomes numbers</h3>
+
+      <p>A model cannot compare two strings for <em>meaning</em> — <code>strings.Contains</code> is the best you get. So the first move is to turn text into a list of numbers, chosen so that texts meaning similar things get similar lists. That list is called an <strong>embedding</strong> or a <strong>vector</strong>.</p>
+
+      <p>For potion, the hot-path model, the whole process is genuinely this small:</p>
+
+      <figure>
+        <svg viewBox="0 0 900 250" role="img" aria-label="Text is split into tokens; each token looks up one row of 512 numbers in a baked matrix; the rows are averaged into a single row of 512 numbers; that row is scaled to length one to become the document vector.">
+          <defs>
+            <marker id="m1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <text x="20" y="30" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">"connection refused"</text>
+
+          <line x1="20" y1="44" x2="20" y2="66" stroke="currentColor" stroke-width="1.3" marker-end="url(#m1)"/>
+          <text x="34" y="62" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.7">tokenise</text>
+
+          <rect x="20" y="74" width="96" height="30" rx="3" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          <text x="68" y="94" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5" fill="currentColor">connection</text>
+          <rect x="126" y="74" width="76" height="30" rx="3" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          <text x="164" y="94" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5" fill="currentColor">refused</text>
+
+          <line x1="112" y1="112" x2="112" y2="134" stroke="currentColor" stroke-width="1.3" marker-end="url(#m1)"/>
+          <text x="126" y="130" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.7">look up one row each, from a matrix baked into the image</text>
+
+          <rect x="20" y="142" width="420" height="26" rx="3" fill="var(--hot-soft)" stroke="var(--hot)" stroke-width="1.2"/>
+          <text x="34" y="160" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--hot)">0.041  -0.118   0.207   0.003  …   -0.062</text>
+          <text x="452" y="160" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.7">512 numbers</text>
+
+          <rect x="20" y="174" width="420" height="26" rx="3" fill="var(--hot-soft)" stroke="var(--hot)" stroke-width="1.2"/>
+          <text x="34" y="192" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--hot)">-0.017  0.230  -0.044   0.161  …    0.098</text>
+          <text x="452" y="192" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.7">512 numbers</text>
+
+          <line x1="560" y1="171" x2="600" y2="171" stroke="currentColor" stroke-width="1.3" marker-end="url(#m1)"/>
+          <text x="580" y="162" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.75">average</text>
+
+          <rect x="610" y="158" width="220" height="26" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <text x="720" y="176" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">one row of 512</text>
+
+          <line x1="720" y1="192" x2="720" y2="214" stroke="currentColor" stroke-width="1.3" marker-end="url(#m1)"/>
+          <text x="734" y="210" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.7">scale to length 1</text>
+
+          <text x="610" y="240" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="600" fill="var(--hot)">the document vector</text>
+        </svg>
+        <figcaption><b>Static embeddings, start to finish.</b> Every token has one pre-computed row; the document is the average of its tokens' rows, scaled to unit length. No neural network runs at request time — that is why it costs microseconds. MiniLM produces the same <em>shape</em> of output, but its rows are computed by a transformer that lets tokens influence each other, which is why it is slower and more accurate.</figcaption>
+      </figure>
+
+      <div class="note">
+        <p><strong>The individual numbers mean nothing on their own.</strong> Dimension 237 is not "database-ness". Meaning is spread across all 512 together, and only <em>relationships between whole vectors</em> are interpretable. This is why you never inspect a vector — you only ever compare two.</p>
+      </div>
+
+      <h3>Step two: comparing two vectors</h3>
+
+      <p>Think of a vector as an arrow from the origin. Two documents about the same thing produce arrows pointing in nearly the same <strong>direction</strong>. Documents about different things point elsewhere.</p>
+
+      <p>Direction is what we want, not length. A response with 2 items and one with 40 items should count as similar if they are structurally the same thing — so the measure has to ignore how "big" the vector is and look only at the angle between them. That measure is <strong>cosine similarity</strong>.</p>
+
+      <p>Here it is on two-dimensional vectors, small enough to check by hand:</p>
+
+      <div class="eq"><i># two vectors</i>
+A = (3, 4)          B = (4, 3)
+
+<i># scale each to length 1  (length = √(3² + 4²) = 5)</i>
+Â = (0.6, 0.8)      B̂ = (0.8, 0.6)
+
+<i># cosine similarity = multiply pairwise, then add</i>
+<b>similarity</b> = (0.6 × 0.8) + (0.8 × 0.6)
+           = 0.48 + 0.48
+           = <b>0.96</b>        <i># → an angle of about 16°</i>
+
+<i># distance is just the flip side</i>
+<b>distance</b>   = 1 − 0.96 = <b>0.04</b></div>
+
+      <p>Two things fall out of that arithmetic, and both matter downstream:</p>
+      <ul>
+        <li><strong>Scaling to length 1 first</strong> ("normalising") is what lets the comparison be a plain multiply-and-add. It also means averaging vectors later stays well behaved.</li>
+        <li><strong>Similarity and distance are the same number, inverted.</strong> <code>distance = 1 − similarity</code>. Pulse uses both, which is a real source of confusion — see the table at the end of this section.</li>
+      </ul>
+
+      <h4>The range, and what it feels like</h4>
+      <p>Similarity runs from 1 (identical direction) through 0 (perpendicular, unrelated) to −1 (opposite). Distance therefore runs 0 → 1 → 2. For real text you almost never see the negative half, so in practice the useful ruler is 0 to 1 — and these are Pulse's own measured numbers, not illustrations:</p>
+
+      <div class="ruler">
+        <div class="lo"><span>0.000</span><span><em>byte-identical text after masking — the cache-hit case</em></span></div>
+        <div class="lo"><span>0.015</span><span><em>median healthy check against its baseline</em></span></div>
+        <div class="lo"><span>0.063</span><span><em>worst healthy check observed over 300 samples</em></span></div>
+        <div><span>0.150</span><span><em>← the default drift threshold sits here</em></span></div>
+        <div class="hi"><span>0.200</span><span><em>the result set went empty</em></span></div>
+        <div class="hi"><span>0.473</span><span><em>a stack trace where JSON used to be</em></span></div>
+        <div class="hi"><span>0.591</span><span><em>an HTML maintenance page</em></span></div>
+        <div class="hi"><span>1.000</span><span><em>perpendicular — nothing in common</em></span></div>
+      </div>
+
+      <p>The gap between 0.063 and 0.200 is the entire safety margin. That is why the threshold had to be measured rather than guessed: it is not a property of the model, it is a property of <em>how much your payloads normally vary</em>.</p>
+
+      <figure>
+        <svg viewBox="0 0 900 430" role="img" aria-label="A fan of rays from a common origin. The baseline direction points straight up. Rays at increasing angles show the worst healthy check at 0.063 distance, the 0.15 default threshold, an empty result set at 0.20, and a maintenance page at 0.59. A shaded wedge marks the region below the threshold where nothing fires.">
+          <defs>
+            <marker id="m2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <!-- healthy wedge: 0 to 31.8 degrees -->
+          <path d="M 120 380 L 120 80 A 300 300 0 0 1 278 125 Z" fill="var(--cold)" opacity="0.10"/>
+
+          <!-- baseline -->
+          <line x1="120" y1="380" x2="120" y2="80" stroke="var(--cold)" stroke-width="2.2" marker-end="url(#m2)"/>
+          <text x="106" y="72" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="600" fill="var(--cold)">baseline</text>
+          <text x="106" y="88" text-anchor="end" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.7">what normal points like</text>
+
+          <!-- 20.4 deg : 0.063 -->
+          <line x1="120" y1="380" x2="225" y2="99" stroke="currentColor" stroke-width="1.4" marker-end="url(#m2)"/>
+          <line x1="231" y1="96" x2="470" y2="96" stroke="currentColor" stroke-width="0.8" opacity="0.35"/>
+          <text x="478" y="93" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="600" fill="currentColor">0.063</text>
+          <text x="530" y="93" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="currentColor" opacity="0.78">worst healthy check</text>
+
+          <!-- 31.8 deg : threshold -->
+          <line x1="120" y1="380" x2="278" y2="125" stroke="currentColor" stroke-width="1.6" stroke-dasharray="6 4"/>
+          <line x1="284" y1="122" x2="470" y2="122" stroke="currentColor" stroke-width="0.8" opacity="0.35"/>
+          <text x="478" y="119" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="600" fill="currentColor">0.150</text>
+          <text x="530" y="119" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="currentColor" opacity="0.78">threshold — nothing inside the shaded wedge fires</text>
+
+          <!-- 36.9 deg : 0.20 -->
+          <line x1="120" y1="380" x2="300" y2="140" stroke="var(--hot)" stroke-width="1.4" marker-end="url(#m2)"/>
+          <line x1="306" y1="137" x2="470" y2="148" stroke="currentColor" stroke-width="0.8" opacity="0.35"/>
+          <text x="478" y="152" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="600" fill="var(--hot)">0.200</text>
+          <text x="530" y="152" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="currentColor" opacity="0.78">result set went empty</text>
+
+          <!-- 65.8 deg : 0.59 -->
+          <line x1="120" y1="380" x2="394" y2="257" stroke="var(--hot)" stroke-width="1.4" marker-end="url(#m2)"/>
+          <line x1="400" y1="255" x2="470" y2="222" stroke="currentColor" stroke-width="0.8" opacity="0.35"/>
+          <text x="478" y="226" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="600" fill="var(--hot)">0.591</text>
+          <text x="530" y="226" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="currentColor" opacity="0.78">HTML maintenance page</text>
+
+          <!-- 90 deg -->
+          <line x1="120" y1="380" x2="420" y2="380" stroke="currentColor" stroke-width="1" opacity="0.4" stroke-dasharray="3 3"/>
+          <text x="428" y="384" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor" opacity="0.6">1.000</text>
+          <text x="478" y="384" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="currentColor" opacity="0.6">perpendicular — nothing in common</text>
+
+          <!-- origin -->
+          <circle cx="120" cy="380" r="3.5" fill="currentColor"/>
+          <text x="120" y="404" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.6">origin</text>
+        </svg>
+        <figcaption><b>The same measurements, drawn as angles.</b> Every arrow is a document vector; the angle between two of them <em>is</em> the cosine distance. The shaded wedge is the region the threshold declares normal. Note how narrow the healthy band is compared to the failures — and how little room sits between the worst healthy check and the weakest real one.</figcaption>
+      </figure>
+
+      <h3>Step three: what "the baseline" actually is</h3>
+
+      <p>Drift compares a body against that probe's own history. But "history" is not a stored list of past bodies — it is a <strong>single vector</strong>, the running average of every healthy body seen so far. Averaging vectors is exactly what it sounds like: average each of the 512 positions independently, then rescale to length 1.</p>
+
+      <p>The average of a set of arrows points in their "middle" direction, so the baseline ends up pointing the way a normal response for that endpoint points. At about 1.5&nbsp;KB per probe, thousands of probes cost a few megabytes.</p>
+
+      <p>It is not a plain average, though — it is <strong>exponentially weighted</strong>, so recent checks count for more:</p>
+
+      <div class="eq"><i># α (alpha) controls how fast the baseline moves</i>
+α = max( 1/samples , 1/warmupChecks )
+
+<i># with warmupChecks = 20:</i>
+sample 1..20   →  α = 1/n     <i># a true running average</i>
+sample 21+     →  α = 0.05    <i># floors here — a rolling 20-sample memory</i>
+
+<i># then, for each of the 512 positions:</i>
+<b>baseline</b> = baseline × (1 − α)  +  new × α
+
+<i># and rescale the result to length 1</i></div>
+
+      <p>The floor is the interesting part. Without it, α keeps shrinking and after ten thousand checks the baseline is frozen — a legitimate deploy that adds a field would alert forever. With it, the baseline keeps a rolling memory and gradually accepts genuine change while still reacting to sudden change.</p>
+
+      <h4>Two rules that keep it honest</h4>
+      <div class="split">
+        <div class="panel">
+          <h4>Only passing checks update it</h4>
+          <p>A failing check usually returns an error page. Averaging that in would drag the baseline toward "broken" and quietly redefine normal.</p>
+        </div>
+        <div class="panel">
+          <h4>Drifted checks are not absorbed</h4>
+          <p>Once a body is over the threshold it is scored but <em>not</em> averaged in. Otherwise a sustained outage trains itself into the baseline and the alert fades out exactly when it matters.</p>
+        </div>
+      </div>
+
+      <h3>Step four: warmup, and why it exists</h3>
+      <p>An average of two samples is noise. Until <code>warmupChecks</code> samples have been absorbed, the baseline is being built and scoring is suppressed entirely — <code>Warming</code> is returned instead of a score, and nothing can fire. At the default of 20 checks on a 30-second interval that is about ten minutes, which the runner shortens by taking its warmup samples in a fast burst at startup.</p>
+
+      <div class="note">
+        <p><strong>The practical consequence:</strong> if you restart a runner while an endpoint is already misbehaving, the new baseline learns the broken payload as normal. Baselines live in memory only and are never persisted, so this is a real operational footgun rather than a theoretical one.</p>
+      </div>
+
+      <h3>Step five: from a score to a signal</h3>
+
+      <p>A score on its own is not an alert. Every passing check produces one, and the great majority are noise around zero. Three gates stand between the number and anything happening, and one of them also decides whether the baseline learns from this check at all.</p>
+
+      <figure>
+        <svg viewBox="0 0 900 400" role="img" aria-label="A passing check is normalised and embedded, then scored against the baseline. Three outcomes follow: while warming there is no score; at or below the threshold the vector is absorbed into the baseline and the breach counter resets; above the threshold the counter increments and the baseline is deliberately left untouched, and only once the counter reaches consecutiveBreaches is a signal emitted.">
+          <defs>
+            <marker id="m3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+            <marker id="m3h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--hot)"/>
+            </marker>
+          </defs>
+
+          <!-- main chain -->
+          <rect x="16" y="168" width="132" height="46" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <text x="82" y="188" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">check passed</text>
+          <text x="82" y="203" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="10" fill="currentColor" opacity="0.65">status matched</text>
+
+          <line x1="152" y1="191" x2="182" y2="191" stroke="currentColor" stroke-width="1.4" marker-end="url(#m3)"/>
+
+          <rect x="186" y="168" width="140" height="46" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <text x="256" y="188" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">normalise, redact,</text>
+          <text x="256" y="203" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">embed</text>
+
+          <line x1="330" y1="191" x2="360" y2="191" stroke="currentColor" stroke-width="1.4" marker-end="url(#m3)"/>
+
+          <rect x="364" y="168" width="150" height="46" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <text x="439" y="188" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">distance from</text>
+          <text x="439" y="203" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">baseline</text>
+
+          <!-- branch: warming -->
+          <path d="M 514 180 L 552 180 L 552 64 L 592 64" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#m3)"/>
+          <text x="562" y="112" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.7">warming</text>
+          <rect x="596" y="40" width="288" height="48" rx="4" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.75"/>
+          <text x="612" y="60" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">no score at all — absorbed silently</text>
+          <text x="612" y="77" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.7">until warmupChecks samples exist</text>
+
+          <!-- branch: below threshold -->
+          <path d="M 518 191 L 592 191" fill="none" stroke="var(--cold)" stroke-width="1.6" marker-end="url(#m3)"/>
+          <text x="554" y="183" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10.5" font-weight="600" fill="var(--cold)">≤ 0.15</text>
+          <rect x="596" y="160" width="288" height="62" rx="4" fill="none" stroke="var(--cold)" stroke-width="1.4"/>
+          <text x="612" y="180" font-family="IBM Plex Sans, sans-serif" font-size="11.5" font-weight="600" fill="var(--cold)">normal</text>
+          <text x="612" y="197" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.8">breach counter → 0</text>
+          <text x="612" y="213" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.8">vector absorbed into the baseline</text>
+
+          <!-- branch: above threshold -->
+          <path d="M 514 202 L 552 202 L 552 300 L 592 300" fill="none" stroke="var(--hot)" stroke-width="1.6" marker-end="url(#m3h)"/>
+          <text x="562" y="262" font-family="IBM Plex Mono, monospace" font-size="10.5" font-weight="600" fill="var(--hot)">&gt; 0.15</text>
+          <rect x="596" y="266" width="288" height="62" rx="4" fill="none" stroke="var(--hot)" stroke-width="1.4"/>
+          <text x="612" y="286" font-family="IBM Plex Sans, sans-serif" font-size="11.5" font-weight="600" fill="var(--hot)">drifted</text>
+          <text x="612" y="303" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.8">breach counter + 1</text>
+          <text x="612" y="319" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.8">baseline deliberately NOT updated</text>
+
+          <!-- fire -->
+          <line x1="740" y1="332" x2="740" y2="356" stroke="var(--hot)" stroke-width="1.6" marker-end="url(#m3h)"/>
+          <text x="752" y="349" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.75">counter ≥ consecutiveBreaches</text>
+          <rect x="596" y="358" width="288" height="34" rx="4" fill="var(--hot-soft)" stroke="var(--hot)" stroke-width="1.6"/>
+          <text x="740" y="380" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="600" fill="var(--hot)">signal → incident → policy actions</text>
+        </svg>
+        <figcaption><b>Three gates, and one of them also controls learning.</b> The branch that matters most is the bottom one: a drifted check increments the counter but is <em>not</em> folded into the baseline. Absorbing it would rotate the baseline toward the broken payload, the score would decay back toward zero, and the alert would quietly disappear during the outage it was meant to report.</figcaption>
+      </figure>
+
+      <h4>The debounce</h4>
+      <p><code>consecutiveBreaches</code> is why one odd response is not a page. The counter increments on every breach and resets to zero the moment a check comes back under the threshold, so the signal requires N breaches <em>in a row</em>. At the default of 2 on a 30-second interval, a genuine change is reported within about a minute, while a single strange response is absorbed and forgotten.</p>
+
+      <h4>The sampling valve</h4>
+      <p><code>sampleEvery</code> scores only every Nth passing check. Drift moves over hours, so coarse sampling costs very little resolution — it exists as the pressure valve if the hot path ever becomes CPU-bound. At <code>sampleEvery: 10</code> you do a tenth of the embedding work and find out about a change in ten intervals instead of one. Left at 1 by default, because potion is cheap enough that most clusters never need it.</p>
+
+      <h4>What the signal becomes</h4>
+      <p>Once it fires, the runner ships an observation carrying the probe name and the score — <a href="#flow">and nothing derived from the body</a>. The engine turns that into a single-member incident tagged <code>bodyDrift</code>, and the policy's actions run against it: a Prometheus gauge and a Kubernetes Event at minimum, plus whatever else the policy declares. The canary's <code>status.phase</code> stays <code>Healthy</code> throughout, because the check genuinely is passing — the drift shows up in <code>status.intelligence</code> instead.</p>
+
+      <h3>Step six: one operation, three jobs</h3>
+
+      <p>Cosine is doing all the work in all three model-driven triggers. What changes is <em>what gets compared to what</em>, and — the part that trips people up — <em>which direction the comparison runs</em>:</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Trigger</th><th>Compares</th><th>Measure</th><th>Fires when</th><th>So that you learn</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>bodyDrift</code></td>
+              <td>this body ↔ this probe's baseline</td>
+              <td><strong>distance</strong></td>
+              <td><code>distance &gt; 0.15</code><br><span style="opacity:.7">far from normal is bad</span></td>
+              <td>this endpoint is returning something it does not normally return, while still passing</td>
+            </tr>
+            <tr>
+              <td><code>failureCorrelation</code></td>
+              <td>probe A's failure ↔ probe B's failure</td>
+              <td><strong>similarity</strong></td>
+              <td><code>similarity ≥ 0.85</code><br><span style="opacity:.7">close together means same cause</span></td>
+              <td>these separate red checks are one outage, and which one to go and fix</td>
+            </tr>
+            <tr>
+              <td><code>failureNovelty</code></td>
+              <td>this failure ↔ every known cluster</td>
+              <td><strong>similarity</strong></td>
+              <td><code>no cluster ≥ 0.80</code><br><span style="opacity:.7">close to nothing means it is new</span></td>
+              <td>whether this deserves a fresh investigation or is the failure you already know about</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>So a <em>rising</em> number is bad for drift and good for correlation. They are the same underlying quantity — <code>distance = 1 − similarity</code> — pointed in opposite directions because the questions are opposite. Worth keeping straight when you tune thresholds.</p>
+
+      <h4>Novelty clustering, concretely</h4>
+      <p>There is no training step and no clustering algorithm in the usual sense. Each failure vector is compared against the centroid of every failure shape seen so far:</p>
+      <div class="eq"><i># for each new failure vector v</i>
+best = the cluster whose centroid has the highest similarity to v
+
+if similarity(best, v) ≥ 0.80:
+    <b>known shape</b>  → count++, nudge that centroid toward v
+else:
+    <b>new shape</b>    → create a cluster with v as its centroid</div>
+      <p>A "cluster" is just a centroid, a count, and a first-seen time. Nudging the centroid is the same weighted average as the drift baseline, so a cluster tracks the family of failures it represents rather than only its first example.</p>
+
+      <h3>Why the two models' vectors can never be compared</h3>
+      <p>potion produces 512 numbers; MiniLM produces 384. Different lengths make the arithmetic impossible, but that is the shallow reason. The real one is that <strong>the axes mean different things</strong>. Each model arranged meaning into its own coordinate system during training, so position 12 in one has no relationship to position 12 in the other. Even if both produced 512 numbers, a cosine between them would be a plausible-looking number that means nothing at all.</p>
+      <p>Pulse tags every vector with its space and treats mixing them as a programming error — a panic, not a returned score — precisely because the failure would otherwise be silent and the corrupted numbers would look perfectly reasonable.</p>
+
+      <h3>Vocabulary</h3>
+      <dl class="terms">
+        <div><dt>embedding / vector</dt><dd>A fixed-length list of numbers standing in for a piece of text, arranged so similar meanings land near each other.</dd></div>
+        <div><dt>dimensions</dt><dd>How many numbers are in that list — 512 for potion, 384 for MiniLM. A property of the model, not a quality setting.</dd></div>
+        <div><dt>normalising (to unit length)</dt><dd>Scaling a vector so its length is exactly 1, keeping direction and discarding magnitude.</dd></div>
+        <div><dt>cosine similarity</dt><dd>How closely two vectors point the same way. 1 = identical direction, 0 = unrelated, −1 = opposite.</dd></div>
+        <div><dt>cosine distance</dt><dd><code>1 − similarity</code>. 0 = identical, 1 = unrelated. This is what a drift score is.</dd></div>
+        <div><dt>centroid</dt><dd>The average of a group of vectors — the group's "middle" direction. Both the drift baseline and each novelty cluster are centroids.</dd></div>
+        <div><dt>mean pooling</dt><dd>Turning a variable number of token vectors into one document vector by averaging them.</dd></div>
+        <div><dt>EWMA</dt><dd>Exponentially weighted moving average — a running average that weights recent samples more heavily.</dd></div>
+        <div><dt>embedding space</dt><dd>The coordinate system one model produces. Vectors from different spaces are not comparable.</dd></div>
+      </dl>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="shape">
+      <h2>Moving parts</h2>
+
+      <figure>
+        <svg viewBox="0 0 900 470" role="img" aria-label="The controller flattens canary and policy CRs into a ConfigMap and Secret. Probe runners mount them, execute checks, and push observations and results to the incident engine. Both runners and engine expose Prometheus metrics; runners additionally write per-check JSON to stdout for a log collector, while the engine sends per-incident records to Datadog, Slack and language model endpoints. The controller polls the engine and writes incidents back to CR status.">
+          <defs>
+            <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <!-- ===== control plane ===== -->
+          <rect x="20" y="20" width="196" height="62" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text x="118" y="45" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="currentColor">pulse-controller</text>
+          <text x="118" y="64" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor" opacity="0.72">Deployment ×1</text>
+
+          <rect x="20" y="128" width="196" height="58" rx="5" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3"/>
+          <text x="118" y="151" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5" fill="currentColor">probes.yaml</text>
+          <text x="118" y="170" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5" fill="currentColor">auth.yaml</text>
+
+          <line x1="118" y1="82" x2="118" y2="124" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+          <text x="128" y="108" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="currentColor" opacity="0.72">writes</text>
+
+          <!-- ===== runners ===== -->
+          <rect x="306" y="124" width="200" height="80" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <rect x="314" y="116" width="200" height="80" rx="5" fill="none" stroke="currentColor" stroke-width="1" opacity="0.4"/>
+          <rect x="322" y="108" width="200" height="80" rx="5" fill="none" stroke="currentColor" stroke-width="1" opacity="0.22"/>
+          <text x="406" y="150" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="currentColor">pulse-probe-runner</text>
+          <text x="406" y="168" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="currentColor" opacity="0.72">StatefulSet ×N — sharded</text>
+          <text x="406" y="186" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="var(--hot)" font-weight="600">potion · in-process</text>
+
+          <line x1="220" y1="160" x2="302" y2="160" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+          <text x="261" y="152" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="currentColor" opacity="0.72">mounts</text>
+
+          <!-- ===== engine ===== -->
+          <rect x="620" y="124" width="248" height="80" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text x="744" y="150" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="currentColor">pulse-incident-engine</text>
+          <text x="744" y="168" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="currentColor" opacity="0.72">Deployment ×1 — on demand</text>
+          <text x="744" y="186" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="var(--cold)" font-weight="600">MiniLM · ONNX Runtime</text>
+
+          <line x1="526" y1="150" x2="616" y2="150" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+          <text x="571" y="142" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.72">observations</text>
+          <line x1="526" y1="178" x2="616" y2="178" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+          <text x="571" y="196" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.72">results</text>
+
+          <!-- engine mounts the same config -->
+          <path d="M 118 190 L 118 232 L 744 232 L 744 208" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#a1)"/>
+          <text x="430" y="226" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.7">same ConfigMap + Secret — policies and credentials never travel over the wire</text>
+
+          <!-- status back to CRs -->
+          <path d="M 868 140 L 890 140 L 890 40 L 220 40" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+          <text x="556" y="32" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.72">polls /incidents every 15s → CR status + Kubernetes Events</text>
+
+          <!-- ===== egress boundary ===== -->
+          <line x1="20" y1="286" x2="890" y2="286" stroke="currentColor" stroke-width="1" opacity="0.25" stroke-dasharray="2 4"/>
+          <text x="20" y="278" font-family="IBM Plex Mono, monospace" font-size="10" letter-spacing="1" fill="currentColor" opacity="0.55">OUTSIDE PULSE</text>
+
+          <!-- egress targets -->
+          <rect x="20" y="330" width="196" height="62" rx="5" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="118" y="354" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" font-weight="600" fill="currentColor">log pipeline</text>
+          <text x="118" y="373" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.72">Datadog agent · Fluent Bit</text>
+
+          <rect x="266" y="330" width="216" height="62" rx="5" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="374" y="354" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" font-weight="600" fill="currentColor">metrics scrape</text>
+          <text x="374" y="373" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.72">Prometheus · Datadog OpenMetrics</text>
+
+          <rect x="576" y="330" width="292" height="62" rx="5" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="722" y="354" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" font-weight="600" fill="currentColor">incident sinks</text>
+          <text x="722" y="373" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.72">Datadog · Loki · Splunk · OTLP · Slack · LLM</text>
+
+          <!-- runner egress: stdout JSON -->
+          <path d="M 350 208 L 350 262 L 118 262 L 118 326" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+          <text x="118" y="316" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10.5" font-weight="600" fill="currentColor">stdout JSON</text>
+
+          <!-- runner egress: metrics -->
+          <path d="M 430 208 L 430 300 L 374 300 L 374 326" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+
+          <!-- engine egress: metrics -->
+          <path d="M 660 208 L 660 300 L 420 300" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text x="470" y="316" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10.5" font-weight="600" fill="currentColor">/metrics</text>
+
+          <!-- engine egress: actions -->
+          <line x1="760" y1="208" x2="760" y2="326" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+          <text x="772" y="272" font-family="IBM Plex Mono, monospace" font-size="10.5" font-weight="600" fill="currentColor">actions</text>
+
+          <!-- volume annotations -->
+          <text x="240" y="424" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.72">one record per check — hundreds/sec at scale</text>
+          <text x="722" y="424" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.72">one record per incident — a handful per day</text>
+          <line x1="60" y1="404" x2="420" y2="404" stroke="currentColor" stroke-width="1" opacity="0.3"/>
+          <line x1="576" y1="404" x2="868" y2="404" stroke="currentColor" stroke-width="1" opacity="0.3"/>
+        </svg>
+        <figcaption><b>The control loop is closed; the data is not.</b> Runners emit per-check telemetry outward — Prometheus metrics always, plus one JSON line per check to stdout when a canary opts into the <code>stdout</code> sink. The engine emits at a completely different granularity: one record per <em>incident</em>, pushed directly to whichever backends the policy names. Both streams can land in the same Datadog, but they arrive by different routes and differ in volume by orders of magnitude.</figcaption>
+      </figure>
+
+      <h3>Two outbound streams, not one</h3>
+      <p>It is worth being precise about which component talks to your observability stack, because they do very different things.</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th></th><th>From the runners</th><th>From the engine</th></tr>
+          </thead>
+          <tbody>
+            <tr><th>Granularity</th><td>one record per check</td><td>one record per incident</td></tr>
+            <tr><th>Volume</th><td>hundreds/sec at a few thousand canaries</td><td>a handful per day</td></tr>
+            <tr><th>Transport</th><td>Prometheus scrape; stdout JSON picked up by a node log agent</td><td>direct HTTP push from the action</td></tr>
+            <tr><th>Configured by</th><td><code>HttpCanary.spec.outputs</code></td><td><code>AnomalyPolicy.spec.actions</code></td></tr>
+            <tr><th>Carries</th><td>status, duration, drift score, latency z-score</td><td>root cause, members, novelty, the LLM analysis</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The per-check stream is the one that predates this work — <code>spec.outputs</code> already chose between <code>prometheus</code> and <code>stdout</code>, and the drift and latency scores simply joined the metrics already there. Nothing about that changed.</p>
+
+      <pre><code><span class="k">spec:</span>
+  <span class="k">outputs:</span>
+    - {type: prometheus}   <span class="c"># /metrics on each runner — scraped</span>
+    - {type: stdout}       <span class="c"># one JSON line per check — for a Datadog/Fluent Bit daemonset</span></code></pre>
+
+      <p>What is new is the second stream. An <code>observability</code> action pushes a fully-formed incident — root cause, affected checks, whether the failure shape was novel, and the investigation if an <code>llm</code> action ran first — straight to the backend, shaped per provider. That is a different kind of record than a check result, which is why it does not go through <code>spec.outputs</code>.</p>
+
+      <div class="note">
+        <p><strong>Sending both to Datadog is a reasonable setup, and they are not redundant.</strong> The runner stream gives you dashboards and alerting on raw check behaviour, at full resolution. The engine stream gives you one high-signal event per incident, already correlated and root-caused. Alerting on the first and reading the second is the intended shape.</p>
+      </div>
+
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="flow">
+      <h2>Two models, two flows</h2>
+
+      <p>This is the part worth internalising. The two models are not interchangeable, and the difference is not really about quality — it is about <strong>where in the pipeline text becomes a vector</strong>, and that placement is forced by two very different sets of constraints.</p>
+
+      <h3>Start with the volumes</h3>
+      <p>Drift scores every <em>passing</em> check. Correlation only ever sees <em>failures</em>. At any reasonable availability those differ by three orders of magnitude:</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Canaries @ 30s</th><th class="num">Passing checks/sec <span class="chip hot">hot</span></th><th class="num">Failures/sec <span class="chip cold">cold</span></th></tr>
+          </thead>
+          <tbody>
+            <tr><td>1,000</td><td class="num">~33</td><td class="num">~0.03</td></tr>
+            <tr><td>5,000</td><td class="num">~167</td><td class="num">~0.17</td></tr>
+            <tr><td>10,000</td><td class="num">~333</td><td class="num">~0.33</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>A transformer on the hot path would burn two to four cores continuously to track a signal that moves over hours. That is true of <em>any</em> transformer, so swapping MiniLM for something smaller does not rescue it.</p>
+
+      <h3 class="lede-hot" style="padding-left:0.9rem">The hot path: vectorise locally, ship a number</h3>
+
+      <p><strong>potion-base-32M</strong> is a Model2Vec static embedding. There is no transformer forward pass at all — inference is a token lookup and a mean over a baked matrix. Two consequences:</p>
+
+      <div class="split">
+        <div class="panel">
+          <h4>It is effectively free</h4>
+          <p>Benchmarked at <strong>~12,400 embeddings/sec/core</strong> on a 2.5&nbsp;KB body — about 37× the 333/sec you would need at ten thousand canaries. A cache in front absorbs the common case where an endpoint returns a byte-identical body every check.</p>
+        </div>
+        <div class="panel">
+          <h4>It needs no cgo</h4>
+          <p>It is a <code>[]float32</code> matrix and a tokenizer, both pure Go. That is why the probe runner — the component that scales to N replicas — keeps its <code>CGO_ENABLED=0</code> <code>distroless/static</code> image.</p>
+        </div>
+      </div>
+
+      <p>Because it is cheap and cgo-free, the model can live <em>inside every probe runner</em>. And because it lives there, the response body never has to go anywhere.</p>
+
+      <h3 class="lede-cold" style="padding-left:0.9rem">The cold path: ship text, vectorise centrally</h3>
+
+      <p><strong>all-MiniLM-L6-v2</strong> is a real transformer, run through ONNX Runtime. It is slower and needs cgo and a shared library — but it only runs on failures, so the cost is paid once per outage rather than once per check.</p>
+
+      <p>More importantly, correlation <em>cannot</em> be done locally. Runners shard by probe name, so two canaries hitting the same broken backend almost always land on different replicas. A runner comparing failures only against its own slice would systematically miss exactly the incidents correlation exists to catch. The comparison has to happen where every shard's failures meet — which is the engine.</p>
+
+      <figure>
+        <svg viewBox="0 0 900 430" role="img" aria-label="Comparison of two data flows. On the hot path the response body is normalized and embedded by potion inside the probe runner pod, and only a numeric drift score crosses the pod boundary. On the cold path the failure message is normalized and redacted inside the runner, the resulting text crosses the boundary, and MiniLM embeds it inside the incident engine.">
+          <defs>
+            <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+            <marker id="a2h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--hot)"/>
+            </marker>
+            <marker id="a2c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--cold)"/>
+            </marker>
+          </defs>
+
+          <!-- pod boundaries -->
+          <rect x="16" y="46" width="512" height="344" rx="7" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="5 4" opacity="0.6"/>
+          <text x="30" y="36" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="600" fill="currentColor" opacity="0.75">probe runner pod</text>
+
+          <rect x="600" y="46" width="284" height="344" rx="7" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="5 4" opacity="0.6"/>
+          <text x="614" y="36" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="600" fill="currentColor" opacity="0.75">incident engine pod</text>
+
+          <!-- ============ HOT LANE ============ -->
+          <text x="32" y="80" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" fill="var(--hot)" letter-spacing="1">HOT — EVERY PASSING CHECK</text>
+
+          <rect x="32" y="96" width="104" height="46" rx="4" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="84" y="115" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">response</text>
+          <text x="84" y="130" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">body</text>
+
+          <line x1="140" y1="119" x2="172" y2="119" stroke="var(--hot)" stroke-width="1.5" marker-end="url(#a2h)"/>
+
+          <rect x="176" y="96" width="104" height="46" rx="4" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="228" y="115" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">normalise</text>
+          <text x="228" y="130" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">+ redact</text>
+
+          <line x1="284" y1="119" x2="316" y2="119" stroke="var(--hot)" stroke-width="1.5" marker-end="url(#a2h)"/>
+
+          <rect x="320" y="96" width="104" height="46" rx="4" fill="var(--hot-soft)" stroke="var(--hot)" stroke-width="1.6"/>
+          <text x="372" y="115" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="600" fill="var(--hot)">potion</text>
+          <text x="372" y="130" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="var(--hot)">→ 512-dim vector</text>
+
+          <line x1="372" y1="146" x2="372" y2="176" stroke="var(--hot)" stroke-width="1.5" marker-end="url(#a2h)"/>
+
+          <rect x="320" y="180" width="104" height="46" rx="4" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="372" y="199" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">cosine vs</text>
+          <text x="372" y="214" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">baseline</text>
+
+          <!-- the crossing -->
+          <path d="M 428 203 L 690 203 L 690 244" fill="none" stroke="var(--hot)" stroke-width="2" marker-end="url(#a2h)"/>
+          <text x="560" y="194" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="600" fill="var(--hot)">driftScore: 0.204</text>
+          <text x="560" y="222" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.7">one float — no body, no text, no vector</text>
+
+          <!-- baseline store -->
+          <rect x="176" y="180" width="104" height="46" rx="4" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3"/>
+          <text x="228" y="199" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="currentColor" opacity="0.8">baseline</text>
+          <text x="228" y="214" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.7">in memory</text>
+          <line x1="316" y1="203" x2="286" y2="203" stroke="currentColor" stroke-width="1" opacity="0.8" marker-end="url(#a2)"/>
+
+          <!-- divider -->
+          <line x1="32" y1="256" x2="868" y2="256" stroke="currentColor" stroke-width="1" opacity="0.22"/>
+
+          <!-- ============ COLD LANE ============ -->
+          <text x="32" y="288" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" fill="var(--cold)" letter-spacing="1">COLD — FAILURES ONLY</text>
+
+          <rect x="32" y="304" width="104" height="46" rx="4" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="84" y="323" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">failure</text>
+          <text x="84" y="338" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">message</text>
+
+          <line x1="140" y1="327" x2="172" y2="327" stroke="var(--cold)" stroke-width="1.5" marker-end="url(#a2c)"/>
+
+          <rect x="176" y="304" width="104" height="46" rx="4" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="228" y="323" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">normalise</text>
+          <text x="228" y="338" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">+ redact</text>
+
+          <!-- the crossing: text leaves un-vectorised -->
+          <line x1="284" y1="327" x2="622" y2="327" stroke="var(--cold)" stroke-width="2" marker-end="url(#a2c)"/>
+          <text x="450" y="318" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" fill="var(--cold)">"type=http status=&lt;num&gt; message=dial tcp &lt;ip&gt; i/o timeout"</text>
+          <text x="450" y="346" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="currentColor" opacity="0.7">masked text — vectorised on the far side</text>
+
+          <rect x="626" y="304" width="112" height="46" rx="4" fill="var(--cold-soft)" stroke="var(--cold)" stroke-width="1.6"/>
+          <text x="682" y="323" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="600" fill="var(--cold)">MiniLM</text>
+          <text x="682" y="338" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="10.5" fill="var(--cold)">→ 384-dim vector</text>
+
+          <line x1="742" y1="327" x2="768" y2="327" stroke="var(--cold)" stroke-width="1.5" marker-end="url(#a2c)"/>
+
+          <rect x="772" y="304" width="96" height="46" rx="4" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="820" y="323" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">compare</text>
+          <text x="820" y="338" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">all shards</text>
+
+          <!-- hot result lands in engine -->
+          <rect x="642" y="248" width="96" height="40" rx="4" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="690" y="272" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">incident</text>
+        </svg>
+        <figcaption><b>The same pipeline stages, split at a different point.</b> On the hot path the vector step happens before the pod boundary, so what crosses is a single float. On the cold path it happens after, so what crosses is masked text. Neither path ever moves a response body, and neither moves a raw vector.</figcaption>
+      </figure>
+
+      <h3>What that means concretely</h3>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th></th><th><span class="chip hot">hot</span> body drift</th><th><span class="chip cold">cold</span> correlation &amp; novelty</th></tr>
+          </thead>
+          <tbody>
+            <tr><th>Model</th><td>potion-base-32M (Model2Vec)</td><td>all-MiniLM-L6-v2 (ONNX)</td></tr>
+            <tr><th>Runs in</th><td>every probe runner replica</td><td>the single incident engine</td></tr>
+            <tr><th>Inference</th><td>token lookup + mean</td><td>transformer forward pass</td></tr>
+            <tr><th>cgo</th><td>none — pure Go</td><td>required, plus a shared library</td></tr>
+            <tr><th>Dimensions</th><td class="num">512</td><td class="num">384</td></tr>
+            <tr><th>Input</th><td>the response body</td><td>the failure message</td></tr>
+            <tr><th>Vectorised</th><td><strong>before</strong> the pod boundary</td><td><strong>after</strong> the pod boundary</td></tr>
+            <tr><th>Crosses the wire</th><td><code>driftScore</code>, a float</td><td>normalised, redacted text</td></tr>
+            <tr><th>Compared against</th><td>that probe's own history</td><td>other probes, live</td></tr>
+            <tr><th>State</th><td>in-memory EWMA centroid, ~1.5&nbsp;KB/probe</td><td>in-memory failure clusters</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <p><strong>Vectors from the two models are never comparable.</strong> They occupy different embedding spaces, and a cosine distance between them would be a plausible-looking number that means nothing. The code treats mixing them as a panic-level wiring error rather than returning a score.</p>
+        <p>The same reasoning makes the cold model <strong>cluster-wide, not per-policy</strong>: correlation compares failures <em>across</em> policies, so per-policy models would make that either silently wrong or impossible. If policies disagree, the engine picks one deterministically and logs the ones it ignored.</p>
+      </div>
+
+      <h3>Why bodies never leave the runner</h3>
+      <p>This falls out of the placement rather than being bolted on. Because the body is vectorised in-process, the observation shipped to the engine for a drift signal carries <strong>no text at all</strong> — just the probe name, the score, and a fixed human-readable message. There is nothing to leak.</p>
+      <p>Failure text does travel, but it is normalised and redacted first: timestamps, UUIDs, IPs, durations and request IDs are masked, and any regex you list in <code>triggers.bodyDrift.redact</code> is stripped before anything is embedded or logged. The body is also excluded from <code>/results</code> and from CR status, and never appears in a language model prompt.</p>
+
+      <h3>One more consequence: masking is load-bearing</h3>
+      <p>Both paths normalise first, and it is not cosmetic. Real failure text is full of tokens that change every request. Left alone, every observation is unique — novelty reports everything as new and correlation never finds two failures similar enough to merge. Masking is what makes "have we seen this before?" answerable at all.</p>
+      <pre><code><span class="c"># before</span>
+dial tcp 10.96.0.5:5432: i/o timeout after 1.523s (req 3f2504e0-4f89-11d3-9a0c-0305e82c3301)
+
+<span class="c"># after — and the same line an hour later normalises identically</span>
+dial tcp &lt;ip&gt;: i/o timeout after &lt;dur&gt; (req &lt;uuid&gt;)</code></pre>
+      <p>Status codes are deliberately <em>not</em> masked. They are low-cardinality and meaningful — "everything is 503" and "everything is 404" are different incidents.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="deploy">
+      <h2>Deploying it</h2>
+
+      <p>All of this has been run end to end on kind. Commands below use <code>CONTAINER_TOOL=podman</code> because that is what is on your machine; drop it if you switch to Docker.</p>
+
+      <ol class="steps">
+        <li>
+          <h3>Fetch and convert the models</h3>
+          <p>Downloads potion and MiniLM and converts potion's safetensors into the flat binary the Go loader reads. About 210&nbsp;MB, written to <code>hack/models/</code>, which is gitignored.</p>
+          <pre><code>make fetch-models</code></pre>
+        </li>
+
+        <li>
+          <h3>Build the three images</h3>
+          <p>The engine image is the only one with cgo and ONNX Runtime; the other two stay <code>CGO_ENABLED=0</code> on <code>distroless/static</code>.</p>
+          <pre><code>make docker-build              CONTAINER_TOOL=podman IMG=pulse-controller:v1
+make docker-build-proberunner  CONTAINER_TOOL=podman PROBE_RUNNER_IMG=pulse-probe-runner:v1
+make docker-build-incidentengine CONTAINER_TOOL=podman INCIDENT_ENGINE_IMG=pulse-incident-engine:v1</code></pre>
+          <p>Push them to wherever your cluster pulls from, then use those fully-qualified names below.</p>
+        </li>
+
+        <li>
+          <h3>Install the CRDs</h3>
+          <p>Three of them now: <code>httpcanaries</code>, <code>grpccanaries</code>, and the new <code>anomalypolicies</code>.</p>
+          <pre><code>make install</code></pre>
+        </li>
+
+        <li>
+          <h3>Deploy the operator</h3>
+          <p>The controller creates the probe runner and, on demand, the incident engine — so it needs to know both image names.</p>
+          <pre><code>make deploy \
+  IMG=ghcr.io/bryanbarton525/pulse-controller:v1 \
+  PROBE_RUNNER_IMAGE=ghcr.io/bryanbarton525/pulse-probe-runner:v1 \
+  INCIDENT_ENGINE_IMAGE=ghcr.io/bryanbarton525/pulse-incident-engine:v1</code></pre>
+          <p>At this point you should see the controller and a single <code>pulse-probe-runner-0</code>. <strong>No incident engine yet</strong> — that is correct, nothing has opted in.</p>
+        </li>
+
+        <li>
+          <h3>Confirm the models loaded</h3>
+          <p>Worth doing once per environment, because a model that fails to load degrades quietly rather than crashing.</p>
+          <pre><code>kubectl -n pulse-system logs pulse-probe-runner-0 | grep "body-drift model"
+<span class="c"># Loaded the body-drift model {"model": "/models/potion/model.bin", "dimensions": 512}</span></code></pre>
+        </li>
+      </ol>
+
+      <div class="note">
+        <p><strong>If you are on Apple Silicon under podman/libkrun</strong>, the ONNX Runtime version matters more than you would expect. The wrapper is pinned to <code>onnxruntime_go v1.21.0</code> against runtime <code>1.22.0</code> because they share C API version 22. Runtime 1.29 segfaults during environment creation on that CPU — its cpuinfo reports an unknown vendor. If you ever bump the wrapper, re-check <code>ORT_API_VERSION</code> in its header and move the <code>ARG</code> in <code>Dockerfile.incidentengine</code> with it.</p>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="use">
+      <h2>Using it</h2>
+
+      <h3>The smallest thing that works</h3>
+      <p>No credentials, no external services. Correlation plus a Prometheus metric and a Kubernetes Event:</p>
+      <pre><code><span class="k">apiVersion:</span> canary.iambarton.com/v1alpha1
+<span class="k">kind:</span> AnomalyPolicy
+<span class="k">metadata:</span> {name: basic-triage, namespace: pulse-system}
+<span class="k">spec:</span>
+  <span class="k">triggers:</span>
+    <span class="k">failureCorrelation:</span> {}   <span class="c"># empty block = enabled with defaults</span>
+  <span class="k">actions:</span>
+    - {name: local, type: metric}</code></pre>
+
+      <p>Then opt a canary in. Everything about the check itself is unchanged:</p>
+      <pre><code><span class="k">spec:</span>
+  <span class="k">url:</span> https://payments.example.com/api/orders
+  <span class="k">interval:</span> 30
+  <span class="k">expectedStatus:</span> 200
+  <span class="k">intelligence:</span>
+    <span class="k">policyRef:</span> {name: basic-triage, namespace: pulse-system}</code></pre>
+
+      <p>The engine appears within a reconcile. Delete the <code>intelligence</code> block from the last canary and it disappears again.</p>
+
+      <h3>A realistic policy</h3>
+      <pre><code><span class="k">spec:</span>
+  <span class="k">triggers:</span>
+    <span class="k">bodyDrift:</span>
+      <span class="k">enabled:</span> true
+      <span class="k">threshold:</span> "0.15"          <span class="c"># cosine distance; see Operating notes</span>
+      <span class="k">warmupChecks:</span> 20           <span class="c"># samples before scoring is trusted</span>
+      <span class="k">consecutiveBreaches:</span> 2     <span class="c"># debounce — one odd response is not an alert</span>
+      <span class="k">redact:</span>
+        - "\"email\"\\s*:\\s*\"[^\"]*\""
+    <span class="k">failureCorrelation:</span> {enabled: true, windowSeconds: 120}
+    <span class="k">failureNovelty:</span> {enabled: true}
+
+  <span class="k">topology:</span>
+    <span class="k">dependsOn:</span>
+      - {canary: default/payments-api, upstream: [data/postgres-health]}
+    <span class="k">inferDependencies:</span> true   <span class="c"># proposes edges; never acts on them</span>
+
+  <span class="k">actions:</span>                      <span class="c"># fire IN ORDER for the root cause's policy</span>
+    - {name: local, type: metric}
+    - <span class="k">name:</span> investigate
+      <span class="k">type:</span> llm
+      <span class="k">llm:</span>
+        <span class="k">endpoint:</span> http://sglang-gateway.ai.svc:8000/v1/chat/completions
+        <span class="k">model:</span> gemma-3-27b-it
+        <span class="k">apiKeySecretRef:</span> {name: sglang-auth, key: token}
+    - <span class="k">name:</span> notify
+      <span class="k">type:</span> slack
+      <span class="k">slack:</span>
+        <span class="k">webhookSecretRef:</span> {name: slack-auth, key: webhook-url}
+        <span class="k">includeInvestigation:</span> true   <span class="c"># picks up the llm output above</span></code></pre>
+
+      <p>Action order is meaningful: the <code>llm</code> action populates the analysis that the later <code>slack</code> action includes. One investigation per <em>incident</em>, not per canary — that is the whole point of correlating first.</p>
+
+      <div class="note">
+        <p><strong>On your SGLang deployment.</strong> A single SGLang instance is either generative or an embedder, never both. Your Gemma server is the <code>llm</code> action target; it will reject <code>/v1/embeddings</code> unless launched with <code>--is-embedding</code>. You do not need an embedding service — both models are baked into the images.</p>
+      </div>
+
+      <h3>What you actually see</h3>
+      <pre><code>$ kubectl get httpcanary -A -o custom-columns=\
+'NAME:.metadata.name,PHASE:.status.phase,TRIGGER:.status.intelligence.trigger,\
+SCORE:.status.intelligence.score,ROLE:.status.intelligence.role'
+
+NAME      PHASE       TRIGGER              SCORE    ROLE
+api-a     Unhealthy   failureCorrelation            downstream
+api-b     Unhealthy   failureCorrelation            downstream
+backend   Unhealthy   failureCorrelation            rootCause</code></pre>
+
+      <p>And the drift case, which is the one worth staring at — the checks are <strong>passing</strong>:</p>
+      <pre><code>NAME      PHASE     TRIGGER     SCORE
+api-a     Healthy   bodyDrift   0.2036
+api-b     Healthy   bodyDrift   0.2036
+backend   Healthy   bodyDrift   0.2036</code></pre>
+
+      <p>Events carry the same story, and this is where the noise reduction shows:</p>
+      <pre><code>Warning  IncidentOpened        httpcanary/backend  Incident inc-… opened with 3
+                                                  affected check(s); root cause is demo/backend
+Normal   SuppressedByIncident  httpcanary/api-a    Failing as part of incident inc-…;
+                                                  root cause is demo/backend
+Normal   SuppressedByIncident  httpcanary/api-b    …</code></pre>
+      <p>One page, not three.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="operate">
+      <h2>Operating notes</h2>
+
+      <h3>The drift threshold is measured, not guessed</h3>
+      <p>Against a JSON payload whose item count, field values and timestamps all vary between checks:</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Condition</th><th class="num">Drift score</th></tr></thead>
+          <tbody>
+            <tr><td>healthy variation — median</td><td class="num">0.015</td></tr>
+            <tr><td>healthy variation — p95</td><td class="num">0.052</td></tr>
+            <tr><td><strong>healthy variation — max</strong></td><td class="num"><strong>0.063</strong></td></tr>
+            <tr><td>empty result set</td><td class="num">0.200</td></tr>
+            <tr><td>truncated JSON</td><td class="num">0.204</td></tr>
+            <tr><td>null collection</td><td class="num">0.286</td></tr>
+            <tr><td>stack trace inside a 200</td><td class="num">0.473</td></tr>
+            <tr><td>maintenance page</td><td class="num">0.591</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The default of <code>0.15</code> sits 2.4× above the worst healthy check and below the weakest real failure — a 3.3× gap, pinned by a regression test so a change to normalisation or the bundled model cannot quietly invalidate it. Raise it if your payloads vary more than that; lower it only with <code>consecutiveBreaches</code> raised to match.</p>
+
+      <h3>One incident, one notification</h3>
+
+      <p>An incident does not notify the instant it opens. It gains members one observation at a
+      time, and the root cause is frequently the <em>last</em> to report — an API notices an outage
+      before the database check does. So dispatch is <strong>debounced</strong>: the timer re-arms
+      each time the incident changes and the actions run once, about five seconds after it settles,
+      against the final member set and the correct root cause.</p>
+
+      <p>That five seconds is the price of not being wrong. Firing immediately would name whichever
+      canary happened to report first.</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Situation</th><th>What you get</th></tr></thead>
+          <tbody>
+            <tr><td>Five canaries fail off one backend</td><td>one notification, naming the root cause</td></tr>
+            <tr><td>A probe drifts for an hour</td><td>one notification — a refresh is not news</td></tr>
+            <tr><td>A drifting probe starts failing outright</td><td>the drift incident is superseded; the probe joins the correlated one</td></tr>
+            <tr><td>Drift turns into a latency shift</td><td>a second notification — that is a different statement</td></tr>
+            <tr><td>The same outage recurs later</td><td>throttled by <code>cooldownSeconds</code> / <code>maxPerHour</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>A probe holds <strong>at most one open incident</strong>. Without that rule a probe that was
+      already drifting could not join a correlated outage, and a shared failure fragmented into a
+      private incident per drifting probe.</p>
+
+      <h4>How incidents close</h4>
+      <ul>
+        <li><strong>Correlation incidents</strong> close when every member recovers.</li>
+        <li><strong>Drift and latency incidents</strong> close when the probe runner reports the
+        episode ended. That state lives in the runner's memory, so a restart or a resharding loses
+        it — the engine therefore also <strong>sweeps</strong> single-probe incidents that stop
+        being refreshed, after five idle minutes. Correlation incidents are never swept: a long
+        outage is still an outage.</li>
+      </ul>
+
+      <h3>Baselines are in memory, and that is deliberate</h3>
+      <p>Nothing derived from a response body is ever persisted. The cost is that a rollout or a reshard blinds drift detection for one warmup period, which the runner front-loads by taking its warmup samples in a burst. A practical consequence worth knowing: <strong>if you restart the runner while an endpoint is already misbehaving, the new baseline learns the broken payload as normal.</strong></p>
+
+      <h3>Scaling out</h3>
+      <p>Probes partition across replicas by a stable hash. One replica is the default and reproduces the original single-pod behaviour exactly.</p>
+      <pre><code>kubectl -n pulse-system set env deployment/pulse-controller-manager \
+  PULSE_PROBE_RUNNER_SHARDS=3</code></pre>
+      <p>Status stays complete either way — with an engine the controller reads its aggregated view, and without one it fans out across the runners' own pod DNS.</p>
+
+      <h3>What to watch</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Metric</th><th>Means</th></tr></thead>
+          <tbody>
+            <tr><td><code>pulse_canary_drift_score</code></td><td>distance from baseline, per probe. Steady near zero is healthy.</td></tr>
+            <tr><td><code>pulse_canary_signals_total</code></td><td>observations shipped, by kind. Flat <code>failure</code> counts with rising <code>bodyDrift</code> is the green-but-wrong case.</td></tr>
+            <tr><td><code>pulse_incidents_total</code></td><td>incidents opened, by trigger and novelty.</td></tr>
+            <tr><td><code>pulse_embed_cache_hits_total</code></td><td>should dominate misses on stable endpoints. If not, your bodies vary more than you think.</td></tr>
+            <tr><td><code>pulse_incident_actions_throttled_total</code></td><td>rising means something is flapping.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Upgrading from a previous release</h3>
+      <p>The probe runner became a StatefulSet but kept its name. The controller removes the old Deployment on first reconcile — this is handled, but it is the one part of the change that touches a running workload, so watch the first rollout. A Deployment of the same name that does <em>not</em> carry Pulse's labels is deliberately left alone.</p>
+
+      <h3>What has been verified in a cluster</h3>
+      <p>All of the following was exercised end to end on kind, not only in tests: the upgrade from the
+      old probe-runner Deployment to the StatefulSet, correlation across three shards, an unrelated
+      failure at the same moment staying a <em>separate</em> incident, body drift firing at 0.2036 while
+      the check kept returning 200, all four action types with their credentials, the analysis reaching
+      the canary's status, Kubernetes Events, shard partitioning with no gaps or overlaps, and the
+      Prometheus metrics.</p>
+      <p>That run is also what surfaced most of the defects the design notes above describe — the
+      actions inheriting a cancelled request context, the repeat notifications, and the incident
+      lifecycle problems were all invisible to the test suite.</p>
+
+      <h3>Known rough edges</h3>
+      <ul>
+        <li>Multi-arch <code>docker-buildx</code> targets have not been exercised — only native arm64.</li>
+        <li>The engine is a single replica holding in-memory state. A restart loses open incidents and
+        novelty clusters. The sweep cleans up stale drift incidents, and the settling period covers the
+        novelty burst — but a canary that is <em>already failing</em> when the engine restarts will not
+        re-report, because the runner only ships a failure on transition. Its incident stays absent until
+        it recovers and fails again.</li>
+        <li>No load testing. The 12,400/sec figure is a Go benchmark, not a cluster measurement.</li>
+        <li>A custom ClusterRole must grant <code>create</code> and <code>patch</code> on
+        <code>events</code> in the <strong><code>events.k8s.io</code></strong> API group, not just the
+        core one. Granting only core lets the manager start and have every Event rejected, with the
+        Forbidden visible nowhere but its log.</li>
+      </ul>
+    </section>
+
+  </main>
+</div>
+</body>
+</html>

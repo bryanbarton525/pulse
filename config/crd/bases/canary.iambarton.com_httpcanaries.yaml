@@ -213,6 +213,45 @@ spec:
                   type: string
                 description: Headers are added to the request.
                 type: object
+              intelligence:
+                description: |-
+                  Intelligence opts this canary into model-driven evaluation: body drift on
+                  passing checks, latency shift, and correlation of its failures with other
+                  canaries. Omit it and the canary behaves exactly as it always has.
+                properties:
+                  enabled:
+                    default: true
+                    type: boolean
+                  overrides:
+                    description: Overrides tunes a few thresholds for this canary
+                      only.
+                    properties:
+                      driftThreshold:
+                        pattern: ^[0-9]+(\.[0-9]+)?$
+                        type: string
+                      latencyZScoreThreshold:
+                        pattern: ^[0-9]+(\.[0-9]+)?$
+                        type: string
+                      warmupChecks:
+                        minimum: 2
+                        type: integer
+                    type: object
+                  policyRef:
+                    description: PolicyRef selects the AnomalyPolicy governing this
+                      canary.
+                    properties:
+                      name:
+                        minLength: 1
+                        type: string
+                      namespace:
+                        description: Namespace defaults to the canary's own namespace.
+                        type: string
+                    required:
+                    - name
+                    type: object
+                required:
+                - policyRef
+                type: object
               interval:
                 default: 30
                 description: Interval is how often (in seconds) to run the check.
@@ -343,6 +382,46 @@ spec:
               HttpCanaryStatus defines the observed state of HttpCanary.
               The controller fills this in — the user never sets it directly.
             properties:
+              intelligence:
+                description: |-
+                  Intelligence reports what the model concluded about this canary.
+                  Only populated when spec.intelligence is set.
+                properties:
+                  incidentID:
+                    description: IncidentID groups canaries that failed together for
+                      the same reason.
+                    type: string
+                  investigation:
+                    description: Investigation is the language model's root-cause
+                      analysis, in Markdown.
+                    maxLength: 8192
+                    type: string
+                  lastSignalTime:
+                    format: date-time
+                    type: string
+                  policy:
+                    description: Policy is the AnomalyPolicy that evaluated this canary
+                      ("namespace/name").
+                    type: string
+                  role:
+                    description: Role is rootCause or downstream.
+                    enum:
+                    - rootCause
+                    - downstream
+                    type: string
+                  score:
+                    description: Score is the trigger's score, formatted as a decimal
+                      string.
+                    type: string
+                  trigger:
+                    description: Trigger names which evaluation produced the signal.
+                    enum:
+                    - bodyDrift
+                    - latencyShift
+                    - failureCorrelation
+                    - failureNovelty
+                    type: string
+                type: object
               lastCheckTime:
                 description: LastCheckTime is when the canary was last evaluated.
                 format: date-time
