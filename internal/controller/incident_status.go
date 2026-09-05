@@ -163,6 +163,10 @@ func buildIntelligenceViews(incidents []incident.Incident) map[string]intelligen
 				Role:       member.Role,
 				Trigger:    current.Trigger,
 			}
+			if current.Trigger == incident.TriggerFailureCorrelation {
+				novel := current.Novel
+				status.Novel = &novel
+			}
 			if score != 0 {
 				status.Score = strconv.FormatFloat(score, 'f', 4, 64)
 			}
@@ -345,9 +349,17 @@ func intelligenceStatusEqual(left, right *canaryv1alpha1.CanaryIntelligenceStatu
 	return left.IncidentID == right.IncidentID &&
 		left.Role == right.Role &&
 		left.Trigger == right.Trigger &&
+		boolPointerEqual(left.Novel, right.Novel) &&
 		left.Score == right.Score &&
 		left.Policy == right.Policy &&
 		left.Investigation == right.Investigation
+}
+
+func boolPointerEqual(left, right *bool) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
 }
 
 func inferredEqual(left, right []canaryv1alpha1.InferredDependency) bool {

@@ -86,6 +86,8 @@ func main() {
 		logger.Error(err, "Failed to load the auth store")
 		os.Exit(1)
 	}
+	internalToken := proberunner.NewInternalToken(
+		authStore.Values[proberunner.InternalAuthTokenKey])
 
 	registry := prometheus.NewRegistry()
 	metrics := actions.NewMetrics(registry)
@@ -112,12 +114,12 @@ func main() {
 	})
 
 	engine.SetEmbedder(embedder)
-	applyConfig(engine, dispatcher, aggregator, models, config, *authStore, logger)
+	applyConfig(engine, dispatcher, aggregator, models, internalToken, config, *authStore, logger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	mux := incident.NewServeMux(engine, aggregator, logger, registry)
+	mux := incident.NewServeMux(engine, aggregator, logger, registry, internalToken.Get)
 	server := &http.Server{
 		Addr:              listenAddr,
 		Handler:           mux,
@@ -135,7 +137,7 @@ func main() {
 	// The reload loop takes only a context; the logger rides inside it, because
 	// a function taking both forces callers to reason about which one wins.
 	go watchConfigReload(logr.NewContext(ctx, logger), configPath, authFilePath,
-		engine, dispatcher, aggregator, models)
+		engine, dispatcher, aggregator, models, internalToken)
 	go sweepStaleIncidents(logr.NewContext(ctx, logger), engine)
 
 	sigCh := make(chan os.Signal, 1)
@@ -207,16 +209,20 @@ func applyConfig(
 	dispatcher *actions.Dispatcher,
 	aggregator *incident.Aggregator,
 	models *modelState,
+	internalToken *proberunner.InternalToken,
 	config *proberunner.ProbeConfig,
 	authStore proberunner.AuthStore,
 	logger logr.Logger,
 ) {
+	internalToken.Set(authStore.Values[proberunner.InternalAuthTokenKey])
 	engine.LoadProbes(config.Probes)
 
 	// A policy edit can change the model. Rebuild only when it actually
 	// differs, so an unrelated edit does not throw away a warm novelty index.
 	if embedder, changed := models.reloadIfChanged(config.Probes, authStore, logger); changed {
-		engine.SetEmbedder(embedder)
+		if previous := engine.SetEmbedder(embedder); previous != nil && previous != embedder {
+			_ = previous.Close()
+		}
 	}
 
 	history := func(probe string, limit int) []string {
@@ -256,6 +262,7 @@ func watchConfigReload(
 	dispatcher *actions.Dispatcher,
 	aggregator *incident.Aggregator,
 	models *modelState,
+	internalToken *proberunner.InternalToken,
 ) {
 	logger := logr.FromContextOrDiscard(ctx)
 
@@ -301,7 +308,7 @@ func watchConfigReload(
 				continue
 			}
 
-			applyConfig(engine, dispatcher, aggregator, models, newConfig, *newAuth, logger)
+			applyConfig(engine, dispatcher, aggregator, models, internalToken, newConfig, *newAuth, logger)
 		}
 	}
 }

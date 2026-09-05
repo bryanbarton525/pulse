@@ -102,3 +102,60 @@ func TestAggregatorHandlesUnnamedShard(t *testing.T) {
 		t.Fatalf("merged %d results, want 1", got)
 	}
 }
+
+func TestAggregatorComputesLiveAgeWithItsOwnClock(t *testing.T) {
+	t.Parallel()
+
+	clock := time.Unix(1_700_000_000, 0)
+	aggregator := NewAggregator(time.Minute)
+	aggregator.now = func() time.Time { return clock }
+	entry := result(probeA, true)
+	entry.LastCheckTime = clock.Add(-7 * time.Second)
+	aggregator.Record(ResultBatch{Results: []proberunner.ProbeResult{entry}})
+
+	merged := aggregator.Results()
+	if len(merged) != 1 || merged[0].LiveAgeSeconds != 7 {
+		t.Fatalf("live age = %v, want 7 seconds", merged)
+	}
+}
+
+func TestAggregatorBoundsHistoryForRemovedProbes(t *testing.T) {
+	t.Parallel()
+
+	clock := time.Unix(1_700_000_000, 0)
+	aggregator := NewAggregator(time.Minute)
+	aggregator.now = func() time.Time { return clock }
+
+	first := result(probeA, false)
+	first.Message = "failed"
+	aggregator.Record(ResultBatch{Shard: "0", Results: []proberunner.ProbeResult{first}})
+	if got := len(aggregator.History(probeA, 10)); got != 1 {
+		t.Fatalf("initial history length = %d, want 1", got)
+	}
+
+	clock = clock.Add(2 * time.Minute)
+	aggregator.Record(ResultBatch{Shard: "0", Results: []proberunner.ProbeResult{
+		result("b/one", true),
+	}})
+	if got := aggregator.History(probeA, 10); len(got) != 0 {
+		t.Fatalf("removed probe history was retained: %v", got)
+	}
+}
+
+func TestAggregatorKeepsHistoryWhileProbeMovesShards(t *testing.T) {
+	t.Parallel()
+
+	clock := time.Unix(1_700_000_000, 0)
+	aggregator := NewAggregator(time.Minute)
+	aggregator.now = func() time.Time { return clock }
+	first := result(probeA, false)
+	first.Message = "failed"
+	aggregator.Record(ResultBatch{Shard: "0", Results: []proberunner.ProbeResult{first}})
+
+	clock = clock.Add(30 * time.Second)
+	aggregator.Record(ResultBatch{Shard: "1", Results: []proberunner.ProbeResult{first}})
+	aggregator.Record(ResultBatch{Shard: "0"})
+	if got := len(aggregator.History(probeA, 10)); got == 0 {
+		t.Fatal("probe history was lost during resharding")
+	}
+}

@@ -46,6 +46,10 @@ type Engine struct {
 	// travelling over the wire.
 	probes map[string]proberunner.Probe
 
+	// embedMu gives embedding calls a lease on the current model. A writer swap
+	// waits for every in-flight native call to finish before returning the old
+	// model to its owner for closure.
+	embedMu    sync.RWMutex
 	embedder   embed.Embedder
 	dispatcher Dispatcher
 	parse      SelectorParser
@@ -121,16 +125,21 @@ func NewEngine(options EngineOptions) *Engine {
 // Existing novelty clusters are discarded on a swap: they hold vectors from the
 // old embedding space, and comparing those against the new model's output is
 // meaningless. The settling period covers the resulting burst of "new" shapes.
-func (e *Engine) SetEmbedder(embedder embed.Embedder) {
+func (e *Engine) SetEmbedder(embedder embed.Embedder) embed.Embedder {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	e.embedMu.Lock()
+	defer e.embedMu.Unlock()
+
 	if e.embedder == embedder {
-		return
+		return nil
 	}
 
+	previous := e.embedder
 	e.embedder = embedder
 	e.novelty = NewNoveltyIndex(e.now(), 0)
+	return previous
 }
 
 // LoadProbes replaces the engine's view of probe configuration and rebuilds the
@@ -159,6 +168,50 @@ func (e *Engine) Ingest(ctx context.Context, signal observation.Observation) {
 		e.handleFailure(ctx, signal)
 	case observation.KindBodyDrift, observation.KindLatencyShift:
 		e.handleSingleProbeSignal(ctx, signal)
+	}
+}
+
+// ReconcileResults closes incident membership when a newer full result proves
+// that a probe is healthy. Observation delivery is intentionally lossy, so a
+// recovery emitted while the engine is restarting can otherwise leave a
+// reasserted incident open forever. The timestamp guard prevents an older
+// healthy snapshot racing a newer failure onset from closing the new incident.
+func (e *Engine) ReconcileResults(results []proberunner.ProbeResult) {
+	for _, result := range results {
+		if !result.Healthy {
+			continue
+		}
+
+		e.mu.Lock()
+		incidentID, found := e.byProbe[result.Name]
+		current := e.open[incidentID]
+		if !found || current == nil {
+			e.mu.Unlock()
+			continue
+		}
+		member, memberFound := current.Member(result.Name)
+		if !memberFound || !result.LastCheckTime.After(member.Signal.At) {
+			e.mu.Unlock()
+			continue
+		}
+
+		e.window.Remove(result.Name)
+		delete(e.byProbe, result.Name)
+		if !current.remove(result.Name) {
+			if timer, pending := e.pending[current.ID]; pending {
+				timer.Stop()
+				delete(e.pending, current.ID)
+			}
+			delete(e.open, current.ID)
+			e.mu.Unlock()
+			continue
+		}
+		if current.RootCause == result.Name {
+			e.rerankLocked(current)
+		}
+		current.UpdatedAt = result.LastCheckTime
+		current.revision++
+		e.mu.Unlock()
 	}
 }
 
@@ -192,6 +245,7 @@ func (e *Engine) handleRecovery(signal observation.Observation) {
 		e.rerankLocked(current)
 	}
 	current.UpdatedAt = signal.At
+	current.revision++
 }
 
 // handleFailure is the correlation path.
@@ -214,28 +268,38 @@ func (e *Engine) handleFailure(ctx context.Context, signal observation.Observati
 
 	// Learn co-occurrence from onsets. This only ever produces proposals; it
 	// never feeds back into merging.
-	if probe.Intelligence.Topology.InferDependencies {
+	// A restatement of an ongoing failure is not a new onset. Counting them
+	// would let one long outage look like dozens of repeated co-occurrences
+	// and manufacture confidence the evidence does not support.
+	if probe.Intelligence.Topology.InferDependencies && !signal.Reassert {
 		e.inference.RecordOnset(signal.Probe, signal.At, window)
 	}
 
 	selector := e.selector(settings.CandidateSelector)
 	related := e.relatedFailures(candidate, settings, selector, window)
+	relatedCandidates := make([]Candidate, 0, len(related))
+	for _, match := range related {
+		relatedCandidates = append(relatedCandidates, match.Candidate)
+	}
 
 	e.window.Add(candidate)
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	current := e.incidentForLocked(signal.Probe, related, signal.At)
+	current := e.incidentForLocked(signal.Probe, relatedCandidates, signal.At)
 	e.attachLocked(current, signal, vector)
+	e.recordMergeEvidenceLocked(current, candidate, related, settings.SimilarityThreshold)
 	e.rerankLocked(current)
-
-	// Novelty is judged on the ROOT CAUSE's failure, not on whichever victim
-	// happened to report last, so the same outage classifies the same way
-	// regardless of which canary noticed first.
-	e.classifyNoveltyLocked(current, probe)
-
 	current.UpdatedAt = signal.At
+	current.revision++
+
+	// Reassertions rebuild state after an engine restart, but never represent a
+	// new onset and therefore never classify or dispatch actions.
+	if signal.Reassert {
+		return
+	}
+
 	e.dispatchLocked(ctx, current)
 }
 
@@ -274,6 +338,7 @@ func (e *Engine) handleSingleProbeSignal(ctx context.Context, signal observation
 		existing.Members[0].Signal = signal
 		existing.Members[0].Role = RoleRootCause
 		existing.UpdatedAt = signal.At
+		existing.revision++
 		existing.Signature = computeSignature(trigger, signal.Probe, "", []string{signal.Probe})
 
 		// Refresh only. The runner re-reports a drift signal on EVERY drifted
@@ -297,6 +362,7 @@ func (e *Engine) handleSingleProbeSignal(ctx context.Context, signal observation
 		Policy:    probe.Intelligence.Policy,
 		OpenedAt:  signal.At,
 		UpdatedAt: signal.At,
+		revision:  1,
 		Members: []Member{{
 			Probe:  signal.Probe,
 			Role:   RoleRootCause,
@@ -338,31 +404,79 @@ func (e *Engine) openForProbeLocked(probe string) *Incident {
 }
 
 // relatedFailures finds recent failures that share evidence with this one.
+type relatedFailure struct {
+	Candidate Candidate
+	Decision  MergeDecision
+}
+
+const maxMergeEvidence = 128
+
 func (e *Engine) relatedFailures(
 	candidate Candidate,
 	settings proberunner.ProbeFailureCorrelationTrigger,
 	selector Selector,
 	window time.Duration,
-) []Candidate {
+) []relatedFailure {
 	e.mu.Lock()
 	graph := e.graph
 	e.mu.Unlock()
 
 	recent := e.window.Recent(candidate.At, window, candidate.Probe)
 
-	var related []Candidate
+	var related []relatedFailure
 	for _, other := range recent {
 		// The selector is a guardrail for hard boundaries — never correlate
 		// dev with prod — applied to both sides.
 		if !MatchesSelector(selector, candidate.Labels) || !MatchesSelector(selector, other.Labels) {
 			continue
 		}
-		if Evaluate(candidate, other, graph, settings.SimilarityThreshold).Merge {
-			related = append(related, other)
+		decision := Evaluate(candidate, other, graph, settings.SimilarityThreshold)
+		if decision.Merge {
+			related = append(related, relatedFailure{Candidate: other, Decision: decision})
 		}
 	}
 
 	return related
+}
+
+func (e *Engine) recordMergeEvidenceLocked(
+	current *Incident,
+	candidate Candidate,
+	related []relatedFailure,
+	threshold float64,
+) {
+	for _, match := range related {
+		if len(current.MergeEvidence) >= maxMergeEvidence {
+			return
+		}
+		left, right := candidate.Probe, match.Candidate.Probe
+		if right < left {
+			left, right = right, left
+		}
+		duplicate := false
+		for _, existing := range current.MergeEvidence {
+			if existing.Left == left && existing.Right == right && existing.Type == match.Decision.Evidence {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		evidence := MergeEvidence{
+			Left:       left,
+			Right:      right,
+			Type:       match.Decision.Evidence,
+			ObservedAt: candidate.At,
+		}
+		if match.Decision.Evidence == EvidenceSimilarity {
+			similarity := match.Decision.Similarity
+			configuredThreshold := threshold
+			evidence.Similarity = &similarity
+			evidence.Threshold = &configuredThreshold
+		}
+		current.MergeEvidence = append(current.MergeEvidence, evidence)
+	}
 }
 
 // incidentForLocked finds or creates the incident this failure belongs to.
@@ -401,6 +515,7 @@ func (e *Engine) incidentForLocked(probe string, related []Candidate, at time.Ti
 		Trigger:   TriggerFailureCorrelation,
 		OpenedAt:  at,
 		UpdatedAt: at,
+		revision:  1,
 	}
 	e.open[current.ID] = current
 
@@ -469,13 +584,15 @@ func (e *Engine) rerankLocked(current *Incident) {
 	}
 }
 
-func (e *Engine) classifyNoveltyLocked(current *Incident, probe proberunner.Probe) {
+func (e *Engine) classifyNoveltyLocked(
+	current *Incident,
+	probe proberunner.Probe,
+	vector embed.Vector,
+) {
 	novelty := probe.Intelligence.Triggers.FailureNovelty
 	clusterID := ""
 
 	if novelty != nil {
-		root := current.RootCauseSignal()
-		vector := e.embed(context.Background(), root.Text)
 		if len(vector.Values) > 0 {
 			result := e.novelty.Classify(
 				vector,
@@ -526,8 +643,44 @@ func (e *Engine) dispatchLocked(ctx context.Context, current *Incident) {
 			e.mu.Unlock()
 			return
 		}
+		// Snapshot the generation before embedding. Model calls can block, so
+		// they must not hold the engine lock used by ingestion and read APIs.
+		generation := live.revision
+		rootCause := live.RootCause
+		var rootProbe proberunner.Probe
+		var classify bool
+		var rootText string
+		if live.Trigger == TriggerFailureCorrelation {
+			if configured, found := e.probes[live.RootCause]; found && configured.Intelligence != nil {
+				rootProbe = configured
+				classify = true
+				rootText = live.RootCauseSignal().Text
+			}
+		}
+		e.mu.Unlock()
+
+		var vector embed.Vector
+		if classify {
+			embedCtx, cancel := context.WithTimeout(dispatchCtx, 30*time.Second)
+			vector = e.embed(embedCtx, rootText)
+			cancel()
+		}
+
+		e.mu.Lock()
+		live, stillOpen = e.open[id]
+		if !stillOpen || live.RootCause != rootCause || live.revision != generation {
+			e.mu.Unlock()
+			return
+		}
+		// Classify only after the debounce window has settled. Classifying on
+		// every member arrival teaches the same outage to the index repeatedly,
+		// making a genuinely new incident appear familiar before it is sent.
+		if classify {
+			e.classifyNoveltyLocked(live, rootProbe, vector)
+		}
 		snapshot := *live
 		snapshot.Members = append([]Member(nil), live.Members...)
+		snapshot.MergeEvidence = append([]MergeEvidence(nil), live.MergeEvidence...)
 		e.mu.Unlock()
 
 		e.dispatcher.Dispatch(dispatchCtx, &snapshot)
@@ -541,7 +694,7 @@ func (e *Engine) dispatchLocked(ctx context.Context, current *Incident) {
 		}
 
 		e.mu.Lock()
-		if live, stillOpen := e.open[id]; stillOpen {
+		if live, stillOpen := e.open[id]; stillOpen && live.revision == generation {
 			live.Investigation = snapshot.Investigation
 		}
 		e.mu.Unlock()
@@ -595,6 +748,9 @@ func (e *Engine) selector(serialized string) Selector {
 // embedder: correlation then falls back to declared topology alone, which is
 // worse but still correct.
 func (e *Engine) embed(ctx context.Context, text string) embed.Vector {
+	e.embedMu.RLock()
+	defer e.embedMu.RUnlock()
+
 	if e.embedder == nil || text == "" {
 		return embed.Vector{}
 	}
@@ -619,6 +775,7 @@ func (e *Engine) Open() []Incident {
 	for _, current := range e.open {
 		snapshot := *current
 		snapshot.Members = append([]Member(nil), current.Members...)
+		snapshot.MergeEvidence = append([]MergeEvidence(nil), current.MergeEvidence...)
 		incidents = append(incidents, snapshot)
 	}
 

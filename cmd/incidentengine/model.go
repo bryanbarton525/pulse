@@ -120,17 +120,10 @@ func (m *modelState) reloadIfChanged(
 	embedder := buildColdEmbedder(probes, authStore, logger)
 
 	m.mu.Lock()
-	previous := m.embedder
 	m.resolved = resolved
 	m.apiKey = apiKey
 	m.embedder = embedder
 	m.mu.Unlock()
-
-	// Close the old model only after the new one is in place, so no caller can
-	// observe a closed session.
-	if previous != nil && previous != embedder {
-		_ = previous.Close()
-	}
 
 	return embedder, true
 }

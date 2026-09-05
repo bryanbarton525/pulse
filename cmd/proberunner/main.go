@@ -11,12 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	"github.com/bryanbarton525/pulse/internal/embed"
 	"github.com/bryanbarton525/pulse/internal/proberunner"
 )
 
@@ -70,6 +68,7 @@ func main() {
 	// ordinal, so every replica reaches the same split from the same ConfigMap
 	// with no coordination. A single replica owns everything, which is the
 	// default and reproduces the original behavior exactly.
+	allConfig := config
 	ordinal, shards := proberunner.ShardFromEnvironment()
 	shardName := strconv.Itoa(ordinal)
 	config = proberunner.Shard(config, ordinal, shards)
@@ -92,6 +91,8 @@ func main() {
 	defer cancel()
 
 	runner := proberunner.NewRunner(logger, registry, *authStore)
+	internalToken := proberunner.NewInternalToken(
+		authStore.Values[proberunner.InternalAuthTokenKey])
 
 	// ── Attach the model-driven evaluator ────────────────────
 	//
@@ -101,19 +102,32 @@ func main() {
 	var shipper *proberunner.HTTPShipper
 	if incidentEngineURL != "" && anyProbeWantsIntelligence(config.Probes) {
 		shipper = proberunner.NewHTTPShipper(proberunner.ShipperOptions{
-			Endpoint: strings.TrimRight(incidentEngineURL, "/") + "/observations",
-			Shard:    shardName,
-			Logger:   logger,
+			Endpoint:    strings.TrimRight(incidentEngineURL, "/") + "/observations",
+			Shard:       shardName,
+			Logger:      logger,
+			TokenSource: internalToken,
 		})
 
-		embedder := buildHotEmbedder(config.Probes, hotModelPath, hotVocabPath, embedCacheSize, logger)
-		runner.SetIntelligence(proberunner.NewIntelligence(
-			embedder, shipper, logger, proberunner.NewIntelligenceMetrics(registry)))
+		hotModels := &hotModelState{
+			modelPath: hotModelPath,
+			vocabPath: hotVocabPath,
+			cacheSize: embedCacheSize,
+		}
+		embedder := hotModels.reload(allConfig.Probes, logger)
+		defer hotModels.close()
+		intelligence := proberunner.NewIntelligence(
+			embedder, shipper, logger, proberunner.NewIntelligenceMetrics(registry))
+		runner.SetIntelligence(intelligence)
 
-		go proberunner.NewResultPusher(
+		resultPusher := proberunner.NewResultPusher(
 			strings.TrimRight(incidentEngineURL, "/")+"/results",
 			shardName, runner, logger, 5*time.Second,
-		).Run(ctx)
+		).UseTokenSource(internalToken)
+		go resultPusher.Run(ctx)
+
+		go watchConfigReload(ctx, configPath, authFilePath, runner, intelligence, hotModels, internalToken)
+	} else {
+		go watchConfigReload(ctx, configPath, authFilePath, runner, nil, nil, internalToken)
 	}
 
 	runner.Start(ctx, config)
@@ -145,8 +159,6 @@ func main() {
 	// ConfigMap volume mounts use symlinks that get atomically swapped.
 	// fsnotify doesn't reliably detect symlink target changes across
 	// all platforms. Polling every 5s is simple and reliable.
-	go watchConfigReload(ctx, configPath, authFilePath, runner)
-
 	// ── Graceful shutdown ────────────────────────────────────
 	//
 	// Wait for SIGTERM (what Kubernetes sends) or SIGINT (Ctrl+C).
@@ -185,7 +197,15 @@ func main() {
 // When the ConfigMap is updated, Kubernetes creates a new timestamped directory,
 // then atomically swaps the ..data symlink. The file's ModTime changes, which
 // we detect here.
-func watchConfigReload(ctx context.Context, configPath string, authFilePath string, runner *proberunner.Runner) {
+func watchConfigReload(
+	ctx context.Context,
+	configPath string,
+	authFilePath string,
+	runner *proberunner.Runner,
+	intelligence *proberunner.Intelligence,
+	hotModels *hotModelState,
+	internalToken *proberunner.InternalToken,
+) {
 	logger := ctrl.Log.WithName("proberunner")
 	var configModTime time.Time
 	var authModTime time.Time
@@ -232,6 +252,15 @@ func watchConfigReload(ctx context.Context, configPath string, authFilePath stri
 					logger.Error(err, "Failed to reload auth store — keeping current probes")
 					continue
 				}
+				internalToken.Set(newAuthStore.Values[proberunner.InternalAuthTokenKey])
+
+				if intelligence != nil && hotModels != nil {
+					if next, changed := hotModels.reloadIfChanged(newConfig.Probes, logger); changed {
+						if previous := intelligence.SetEmbedder(next); previous != nil && previous != next {
+							_ = previous.Close()
+						}
+					}
+				}
 
 				ordinal, shards := proberunner.ShardFromEnvironment()
 				newConfig = proberunner.Shard(newConfig, ordinal, shards)
@@ -251,48 +280,4 @@ func anyProbeWantsIntelligence(probes []proberunner.Probe) bool {
 		}
 	}
 	return false
-}
-
-// buildHotEmbedder loads the static model used for body-drift scoring.
-//
-// This runs on EVERY passing check, so it must be nearly free: static
-// Model2Vec embeddings are a token lookup and a mean, with no transformer
-// forward pass and no cgo. A cache in front of it absorbs the common case
-// where an endpoint returns an identical body every time.
-//
-// A nil return disables drift while leaving latency and failure reporting
-// working — degrading one trigger beats failing to start.
-func buildHotEmbedder(
-	probes []proberunner.Probe,
-	modelPath, vocabPath string,
-	cacheSize int,
-	logger logr.Logger,
-) embed.Embedder {
-	wanted := false
-	for _, probe := range probes {
-		if probe.Intelligence != nil && probe.Intelligence.Triggers.BodyDrift != nil {
-			wanted = true
-			if probe.Intelligence.Model.Hot.ModelPath != "" {
-				modelPath = probe.Intelligence.Model.Hot.ModelPath
-			}
-			if probe.Intelligence.Model.Hot.VocabPath != "" {
-				vocabPath = probe.Intelligence.Model.Hot.VocabPath
-			}
-			break
-		}
-	}
-
-	if !wanted {
-		return nil
-	}
-
-	embedder, err := embed.LoadPotion(modelPath, vocabPath, 0)
-	if err != nil {
-		logger.Error(err, "Could not load the body-drift model; drift scoring is disabled",
-			"model", modelPath)
-		return nil
-	}
-
-	logger.Info("Loaded the body-drift model", "model", modelPath, "dimensions", embedder.Dimensions())
-	return embed.NewCachingEmbedder(embedder, cacheSize)
 }

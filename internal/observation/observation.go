@@ -78,6 +78,19 @@ type Observation struct {
 	DriftScore    float64 `json:"driftScore,omitempty"`
 	LatencyZScore float64 `json:"latencyZScore,omitempty"`
 
+	// Reassert marks a periodic restatement of a failure that is still
+	// ongoing, rather than a new one.
+	//
+	// The engine holds incidents in memory, so a restart or a redeploy loses
+	// them — and because failures are otherwise reported only on transition, a
+	// canary that was already down would never mention it again and its
+	// incident would stay missing until it recovered and broke a second time.
+	// Restating lets the engine rebuild. The flag exists because a restatement
+	// must NOT count as an onset: the dependency learner measures how often one
+	// canary fails just before another, and counting heartbeats would let a
+	// single long outage manufacture overwhelming confidence.
+	Reassert bool `json:"reassert,omitempty"`
+
 	At time.Time `json:"at"`
 }
 

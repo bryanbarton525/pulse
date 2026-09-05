@@ -289,6 +289,22 @@ func TestIntelligenceAppliesPolicyRedaction(t *testing.T) {
 	}
 }
 
+func TestIntelligenceAppliesPolicyRedactionWithoutBodyDrift(t *testing.T) {
+	t.Parallel()
+
+	intelligence, shipper := testIntelligence(t, nil)
+	probe := intelligentProbe(ProbeTriggers{FailureNovelty: &ProbeFailureNoveltyTrigger{}})
+	probe.Intelligence.Redact = []string{`account=[A-Za-z0-9]+`}
+	intelligence.Evaluate(probe, failed("lookup failed for account=customerSECRET"), nil, time.Millisecond)
+
+	shipper.mu.Lock()
+	defer shipper.mu.Unlock()
+	encoded, _ := json.Marshal(shipper.signals)
+	if strings.Contains(string(encoded), "customerSECRET") {
+		t.Fatalf("policy-level redaction leaked without body drift enabled: %s", encoded)
+	}
+}
+
 // A canary that never opted in must produce nothing.
 func TestIntelligenceIgnoresProbesWithoutPolicy(t *testing.T) {
 	t.Parallel()
@@ -339,5 +355,53 @@ func TestIntelligenceRetainKeepsSurvivingProbeState(t *testing.T) {
 	intelligence.Evaluate(keep, dropped, previous, time.Millisecond)
 	if dropped.DriftScore != 0 {
 		t.Fatalf("DriftScore = %v right after a reset, want 0 while warming", dropped.DriftScore)
+	}
+}
+
+// An ongoing failure is restated on a slow heartbeat, so an engine restart
+// does not leave an already-failing canary with no incident until it happens
+// to recover and break again.
+func TestIntelligenceReassertsOngoingFailures(t *testing.T) {
+	t.Parallel()
+
+	intelligence, shipper := testIntelligence(t, nil)
+	probe := intelligentProbe(ProbeTriggers{})
+
+	start := time.Now()
+	first := failed("Expected 200 but got 503")
+	first.LastCheckTime = start
+	intelligence.Evaluate(probe, first, nil, time.Millisecond)
+
+	// Five minutes of continuous failure at a 5s interval.
+	previous := first
+	for tick := 1; tick <= 60; tick++ {
+		next := failed("Expected 200 but got 503")
+		next.LastCheckTime = start.Add(time.Duration(tick) * 5 * time.Second)
+		intelligence.Evaluate(probe, next, previous, time.Millisecond)
+		previous = next
+	}
+
+	shipper.mu.Lock()
+	defer shipper.mu.Unlock()
+
+	onsets, restatements := 0, 0
+	for _, signal := range shipper.signals {
+		if signal.Kind != observation.KindFailure {
+			continue
+		}
+		if signal.Reassert {
+			restatements++
+		} else {
+			onsets++
+		}
+	}
+
+	// One onset, then a restatement every ReassertInterval.
+	if onsets != 1 {
+		t.Fatalf("onsets = %d, want exactly 1 — a restatement must not look like a new failure", onsets)
+	}
+	if restatements < 2 || restatements > 3 {
+		t.Fatalf("restatements = %d over five minutes at a %v heartbeat, want 2 or 3",
+			restatements, ReassertInterval)
 	}
 }

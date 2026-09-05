@@ -3,6 +3,7 @@ package proberunner
 import (
 	"fmt"
 	"os"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -38,6 +39,41 @@ const (
 	DefaultColdModelPath = "/models/minilm/model.onnx"
 	DefaultColdVocabPath = "/models/minilm/vocab.txt"
 )
+
+// InternalAuthTokenKey is reserved for authentication between Pulse's own
+// controller, runner, and incident-engine processes. It is never copied into
+// probe configuration or exposed through a CR status.
+const InternalAuthTokenKey = "__pulse_internal_token"
+
+// InternalToken holds the reloadable shared credential used between Pulse
+// processes. Kubernetes updates mounted Secret files in place, so callers must
+// read the current value for every request rather than capturing it at startup.
+type InternalToken struct {
+	mu    sync.RWMutex
+	value string
+}
+
+func NewInternalToken(value string) *InternalToken {
+	return &InternalToken{value: value}
+}
+
+func (t *InternalToken) Get() string {
+	if t == nil {
+		return ""
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.value
+}
+
+func (t *InternalToken) Set(value string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.value = value
+	t.mu.Unlock()
+}
 
 // ProbeOutput defines one destination for probe execution telemetry.
 type ProbeOutput struct {
@@ -89,6 +125,9 @@ type Probe struct {
 type ProbeIntelligence struct {
 	// Policy is the governing AnomalyPolicy as "namespace/name".
 	Policy string `yaml:"policy"`
+
+	// Redact applies before any raw failure or response text is shipped.
+	Redact []string `yaml:"redact,omitempty"`
 
 	Model     ProbeModelConfig `yaml:"model"`
 	Triggers  ProbeTriggers    `yaml:"triggers"`

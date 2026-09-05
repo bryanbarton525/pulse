@@ -75,6 +75,16 @@ func (d *Dispatcher) Load(
 	throttles := map[string]*Throttle{}
 	indexed := make(map[string]proberunner.Probe, len(probes))
 
+	// Throttle history has to survive a reload.
+	//
+	// The controller rewrites the probe ConfigMap whenever a canary's status
+	// changes, so a flapping service triggers reloads at exactly the rate the
+	// throttle exists to damp. Building a fresh Throttle here would discard
+	// every recorded firing and let that service page on every check.
+	d.mu.Lock()
+	previous := d.throttles
+	d.mu.Unlock()
+
 	describe := func(name string) (proberunner.Probe, bool) {
 		probe, found := indexed[name]
 		return probe, found
@@ -103,10 +113,16 @@ func (d *Dispatcher) Load(
 		}
 
 		byPolicy[policy] = compiled
-		throttles[policy] = NewThrottle(
-			time.Duration(probe.Intelligence.Throttle.CooldownSeconds)*time.Second,
-			probe.Intelligence.Throttle.MaxPerHour,
-		)
+		cooldown := time.Duration(probe.Intelligence.Throttle.CooldownSeconds) * time.Second
+		maxPerHour := probe.Intelligence.Throttle.MaxPerHour
+		if kept := previous[policy]; kept != nil && kept.Matches(cooldown, maxPerHour) {
+			throttles[policy] = kept
+		} else {
+			// Either the policy is new or its limits were edited. An edit is a
+			// deliberate act by an operator, so starting its history clean is
+			// the right reading of it.
+			throttles[policy] = NewThrottle(cooldown, maxPerHour)
+		}
 	}
 
 	d.mu.Lock()
@@ -186,6 +202,7 @@ func (d *Dispatcher) fireForPolicy(ctx context.Context, policy string, current *
 	d.mu.Lock()
 	compiled := d.byPolicy[policy]
 	throttle := d.throttles[policy]
+	rootProbe := d.probes[current.RootCause]
 	d.mu.Unlock()
 
 	if len(compiled) == 0 {
@@ -196,6 +213,14 @@ func (d *Dispatcher) fireForPolicy(ctx context.Context, policy string, current *
 		"incident", current.ID, "policy", policy, "rootCause", current.RootCause)
 
 	for _, action := range compiled {
+		// Failure novelty is a routing control: familiar failures still update
+		// metrics and notify operators, but they do not spend another LLM call.
+		if action.Type() == TypeLLM && current.Trigger == incident.TriggerFailureCorrelation &&
+			rootProbe.Intelligence != nil &&
+			rootProbe.Intelligence.Triggers.FailureNovelty != nil && !current.Novel {
+			logger.V(1).Info("Skipping investigation for a known failure shape", "action", action.Name())
+			continue
+		}
 		if throttle != nil && !throttle.Allow(current.Signature, action.Name()) {
 			d.metrics.RecordThrottled(action)
 			logger.V(1).Info("Action throttled", "action", action.Name())

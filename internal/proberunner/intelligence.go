@@ -29,8 +29,12 @@ type Shipper interface {
 // and latency is arithmetic.
 type Intelligence struct {
 	mu          sync.RWMutex
+	embedMu     sync.RWMutex
 	normalizers map[string]*anomaly.Normalizer
 	sampleCount map[string]int
+
+	// reasserted tracks when each probe's ongoing failure was last restated.
+	reasserted map[string]time.Time
 
 	// reportedHits and reportedMisses are the cache totals already published
 	// to Prometheus, so RecordCacheStats can publish only the delta.
@@ -50,6 +54,23 @@ type Intelligence struct {
 	shipper  Shipper
 	logger   logr.Logger
 	metrics  *IntelligenceMetrics
+}
+
+// SetEmbedder atomically changes the body-drift embedding space and discards
+// baselines learned in the previous space. It returns the retired model after
+// all in-flight calls have finished, making it safe for the caller to close.
+func (i *Intelligence) SetEmbedder(next embed.Embedder) embed.Embedder {
+	i.embedMu.Lock()
+	defer i.embedMu.Unlock()
+	if i.embedder == next {
+		return nil
+	}
+	previous := i.embedder
+	i.embedder = next
+	i.drift = anomaly.NewDriftDetector()
+	i.reportedHits = 0
+	i.reportedMisses = 0
+	return previous
 }
 
 // IntelligenceMetrics are the runner's Prometheus collectors for this feature.
@@ -109,6 +130,7 @@ func NewIntelligence(
 ) *Intelligence {
 	return &Intelligence{
 		normalizers: map[string]*anomaly.Normalizer{},
+		reasserted:  map[string]time.Time{},
 		sampleCount: map[string]int{},
 		signalling:  map[string]string{},
 		embedder:    embedder,
@@ -136,6 +158,7 @@ func (i *Intelligence) Evaluate(probe Probe, result *ProbeResult, previous *Prob
 
 	// A check that just recovered closes out its incident membership.
 	if previous != nil && !previous.Healthy {
+		i.clearFailure(probe.Name)
 		i.ship(probe.Name, observation.Observation{
 			Probe: probe.Name,
 			Kind:  observation.KindRecovery,
@@ -154,8 +177,13 @@ func (i *Intelligence) Evaluate(probe Probe, result *ProbeResult, previous *Prob
 // would let a single long outage manufacture overwhelming confidence in the
 // dependency learner.
 func (i *Intelligence) reportFailure(probe Probe, result *ProbeResult, previous *ProbeResult) {
-	if previous != nil && !previous.Healthy {
-		return
+	ongoing := previous != nil && !previous.Healthy
+	if ongoing {
+		if !i.dueForReassert(probe.Name, result.LastCheckTime) {
+			return
+		}
+	} else {
+		i.markFailure(probe.Name, result.LastCheckTime)
 	}
 
 	normalizer := i.normalizerFor(probe)
@@ -169,6 +197,7 @@ func (i *Intelligence) reportFailure(probe Probe, result *ProbeResult, previous 
 	i.ship(probe.Name, observation.Observation{
 		Probe:          probe.Name,
 		Kind:           observation.KindFailure,
+		Reassert:       ongoing,
 		Text:           text,
 		Labels:         probe.Labels,
 		ProbeType:      orHTTP(probe.Type),
@@ -180,11 +209,26 @@ func (i *Intelligence) reportFailure(probe Probe, result *ProbeResult, previous 
 	})
 }
 
+func (i *Intelligence) markFailure(probe string, at time.Time) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.reasserted[probe] = at
+}
+
+func (i *Intelligence) clearFailure(probe string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	delete(i.reasserted, probe)
+}
+
 // evaluateDrift scores a PASSING check's response body.
 //
 // The body itself never leaves this function: it is embedded here, compared
 // here, and only the resulting score is shipped.
 func (i *Intelligence) evaluateDrift(probe Probe, result *ProbeResult) {
+	i.embedMu.RLock()
+	defer i.embedMu.RUnlock()
+
 	config := probe.Intelligence.Triggers.BodyDrift
 	if config == nil || i.embedder == nil || result.BodySnippet == "" {
 		return
@@ -221,6 +265,11 @@ func (i *Intelligence) evaluateDrift(probe Probe, result *ProbeResult) {
 	})
 
 	result.DriftScore = outcome.Score
+	result.DriftSamples = outcome.Samples
+	result.DriftState = "ready"
+	if outcome.Warming {
+		result.DriftState = "warming"
+	}
 	if i.metrics != nil && !outcome.Warming {
 		i.metrics.driftScore.WithLabelValues(probe.Name, probe.Intelligence.Policy).Set(outcome.Score)
 	}
@@ -261,6 +310,11 @@ func (i *Intelligence) evaluateLatency(probe Probe, result *ProbeResult, duratio
 	})
 
 	result.LatencyZScore = outcome.ZScore
+	result.LatencySamples = outcome.Samples
+	result.LatencyState = "ready"
+	if outcome.Warming {
+		result.LatencyState = "warming"
+	}
 	if i.metrics != nil && !outcome.Warming {
 		i.metrics.latencyZScore.WithLabelValues(probe.Name, probe.Intelligence.Policy).Set(outcome.ZScore)
 	}
@@ -326,6 +380,28 @@ func (i *Intelligence) ship(probe string, signal observation.Observation) {
 	i.shipper.Ship(context.Background(), signal)
 }
 
+// ReassertInterval is how often an ongoing failure is restated.
+//
+// Long enough that a real outage adds a trickle of traffic rather than a
+// stream, short enough that an engine restart is invisible within a couple of
+// minutes.
+const ReassertInterval = 2 * time.Minute
+
+// dueForReassert reports whether an ongoing failure should be restated, and
+// records the restatement when it is.
+func (i *Intelligence) dueForReassert(probe string, at time.Time) bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	last, found := i.reasserted[probe]
+	if found && at.Sub(last) < ReassertInterval {
+		return false
+	}
+
+	i.reasserted[probe] = at
+	return true
+}
+
 // shouldSample reports whether this check is the Nth for its probe.
 func (i *Intelligence) shouldSample(probe string, every int) bool {
 	i.mu.Lock()
@@ -351,9 +427,11 @@ func (i *Intelligence) normalizerFor(probe Probe) *anomaly.Normalizer {
 		return cached
 	}
 
-	var redact []string
-	if drift := probe.Intelligence.Triggers.BodyDrift; drift != nil {
-		redact = drift.Redact
+	redact := append([]string(nil), probe.Intelligence.Redact...)
+	if len(redact) == 0 {
+		if drift := probe.Intelligence.Triggers.BodyDrift; drift != nil {
+			redact = append(redact, drift.Redact...)
+		}
 	}
 
 	normalizer, err := anomaly.NewNormalizer(redact)
@@ -391,6 +469,11 @@ func (i *Intelligence) Retain(keep map[string]struct{}) {
 			delete(i.sampleCount, probe)
 		}
 	}
+	for probe := range i.reasserted {
+		if _, found := keep[probe]; !found {
+			delete(i.reasserted, probe)
+		}
+	}
 	for probe := range i.signalling {
 		if _, found := keep[probe]; !found {
 			delete(i.signalling, probe)
@@ -403,6 +486,9 @@ func (i *Intelligence) Retain(keep map[string]struct{}) {
 // The cache exposes running totals while Prometheus counters take increments,
 // so the last-reported totals are tracked here and only the delta is added.
 func (i *Intelligence) RecordCacheStats() {
+	i.embedMu.RLock()
+	defer i.embedMu.RUnlock()
+
 	if i.metrics == nil {
 		return
 	}

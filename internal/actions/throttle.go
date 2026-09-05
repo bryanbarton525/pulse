@@ -64,6 +64,12 @@ func (t *Throttle) Allow(signature, action string) bool {
 	return true
 }
 
+// Matches reports whether this throttle already enforces these limits, so a
+// config reload that did not change them can keep the existing history.
+func (t *Throttle) Matches(cooldown time.Duration, maxPerHour int) bool {
+	return t.cooldown == cooldown && t.maxPerHour == maxPerHour
+}
+
 // Forget clears history for a signature, so a genuinely new occurrence after a
 // long quiet period is not held back by stale bookkeeping.
 func (t *Throttle) Forget(signature string) {

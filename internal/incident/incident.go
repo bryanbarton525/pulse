@@ -31,6 +31,18 @@ type Member struct {
 	Signal observation.Observation `json:"signal"`
 }
 
+// MergeEvidence explains why two members were placed in the same incident.
+// Similarity is populated only when an embedding comparison was actually
+// performed; declared topology is evidence in its own right.
+type MergeEvidence struct {
+	Left       string    `json:"left"`
+	Right      string    `json:"right"`
+	Type       string    `json:"type"`
+	Similarity *float64  `json:"similarity,omitempty"`
+	Threshold  *float64  `json:"threshold,omitempty"`
+	ObservedAt time.Time `json:"observedAt"`
+}
+
 // Incident groups signals that share a cause.
 //
 // A single-member incident is the common case: one canary drifted, or one
@@ -49,6 +61,10 @@ type Incident struct {
 	Trigger   string   `json:"trigger"`
 	Members   []Member `json:"members"`
 	RootCause string   `json:"rootCause"`
+
+	// MergeEvidence contains the bounded, pairwise reasons that formed this
+	// incident. It is operator-facing evidence, not an inferred explanation.
+	MergeEvidence []MergeEvidence `json:"mergeEvidence,omitempty"`
 
 	// Policy is the root cause's AnomalyPolicy. It owns action dispatch: one
 	// investigation and one notification per incident, sent to whoever owns
@@ -76,6 +92,11 @@ type Incident struct {
 	// service is red still deserves to know why — as a one-line reference to
 	// somebody else's incident, not a second page.
 	DownstreamFor string `json:"downstreamFor,omitempty"`
+
+	// revision changes whenever dispatch-relevant incident state changes. It is
+	// deliberately internal: callers need the evidence snapshot, while the
+	// engine needs a race-proof generation token around slow model/action work.
+	revision uint64
 }
 
 // ProbeNames lists every member probe, sorted.

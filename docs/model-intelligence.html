@@ -7,7 +7,7 @@
 <title>Pulse Model Intelligence</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap">
 
 <style>
   :root {
@@ -759,7 +759,7 @@ sample 21+     →  α = 0.05    <i># floors here — a rolling 20-sample memory
       </div>
 
       <h3>Step four: warmup, and why it exists</h3>
-      <p>An average of two samples is noise. Until <code>warmupChecks</code> samples have been absorbed, the baseline is being built and scoring is suppressed entirely — <code>Warming</code> is returned instead of a score, and nothing can fire. At the default of 20 checks on a 30-second interval that is about ten minutes, which the runner shortens by taking its warmup samples in a fast burst at startup.</p>
+      <p>An average of two samples is noise. Until <code>warmupChecks</code> samples have been absorbed, the baseline is being built and scoring is suppressed entirely — <code>Warming</code> is returned instead of a score, and nothing can fire. At the default of 20 checks on a 30-second interval that is about ten minutes. The runner follows the configured interval; it does not issue a special startup burst.</p>
 
       <div class="note">
         <p><strong>The practical consequence:</strong> if you restart a runner while an endpoint is already misbehaving, the new baseline learns the broken payload as normal. Baselines live in memory only and are never persisted, so this is a real operational footgun rather than a theoretical one.</p>
@@ -1012,7 +1012,7 @@ else:
             <tr><th>Volume</th><td>hundreds/sec at a few thousand canaries</td><td>a handful per day</td></tr>
             <tr><th>Transport</th><td>Prometheus scrape; stdout JSON picked up by a node log agent</td><td>direct HTTP push from the action</td></tr>
             <tr><th>Configured by</th><td><code>HttpCanary.spec.outputs</code></td><td><code>AnomalyPolicy.spec.actions</code></td></tr>
-            <tr><th>Carries</th><td>status, duration, drift score, latency z-score</td><td>root cause, members, novelty, the LLM analysis</td></tr>
+            <tr><th>Carries</th><td>status, duration, drift score, latency z-score</td><td>root cause, members, novelty, score, policy, tags</td></tr>
           </tbody>
         </table>
       </div>
@@ -1024,7 +1024,7 @@ else:
     - {type: prometheus}   <span class="c"># /metrics on each runner — scraped</span>
     - {type: stdout}       <span class="c"># one JSON line per check — for a Datadog/Fluent Bit daemonset</span></code></pre>
 
-      <p>What is new is the second stream. An <code>observability</code> action pushes a fully-formed incident — root cause, affected checks, whether the failure shape was novel, and the investigation if an <code>llm</code> action ran first — straight to the backend, shaped per provider. That is a different kind of record than a check result, which is why it does not go through <code>spec.outputs</code>.</p>
+      <p>What is new is the second stream. An <code>observability</code> action pushes a bounded incident record — root cause, affected checks, trigger, score, policy, tags, and whether the failure shape was novel — straight to the backend, shaped per provider. The current record does not include generated investigation text; Slack can include that text when configured and ordered after the LLM action. The incident record is different from a check result, which is why it does not go through <code>spec.outputs</code>.</p>
 
       <div class="note">
         <p><strong>Sending both to Datadog is a reasonable setup, and they are not redundant.</strong> The runner stream gives you dashboards and alerting on raw check behaviour, at full resolution. The engine stream gives you one high-signal event per incident, already correlated and root-caused. Alerting on the first and reading the second is the intended shape.</p>
@@ -1418,7 +1418,7 @@ Normal   SuppressedByIncident  httpcanary/api-b    …</code></pre>
       </ul>
 
       <h3>Baselines are in memory, and that is deliberate</h3>
-      <p>Nothing derived from a response body is ever persisted. The cost is that a rollout or a reshard blinds drift detection for one warmup period, which the runner front-loads by taking its warmup samples in a burst. A practical consequence worth knowing: <strong>if you restart the runner while an endpoint is already misbehaving, the new baseline learns the broken payload as normal.</strong></p>
+      <p>Nothing derived from a response body is ever persisted. The cost is that a rollout or a reshard blinds drift detection for one normal, interval-paced warmup period. A practical consequence worth knowing: <strong>if you restart the runner while an endpoint is already misbehaving, the new baseline learns the broken payload as normal.</strong></p>
 
       <h3>Scaling out</h3>
       <p>Probes partition across replicas by a stable hash. One replica is the default and reproduces the original single-pod behaviour exactly.</p>
@@ -1458,10 +1458,9 @@ Normal   SuppressedByIncident  httpcanary/api-b    …</code></pre>
       <ul>
         <li>Multi-arch <code>docker-buildx</code> targets have not been exercised — only native arm64.</li>
         <li>The engine is a single replica holding in-memory state. A restart loses open incidents and
-        novelty clusters. The sweep cleans up stale drift incidents, and the settling period covers the
-        novelty burst — but a canary that is <em>already failing</em> when the engine restarts will not
-        re-report, because the runner only ships a failure on transition. Its incident stays absent until
-        it recovers and fails again.</li>
+        novelty clusters. Runners periodically reassert ongoing failures, rebuilding open incidents
+        without dispatching duplicate actions; the novelty settling period prevents the rebuilt set from
+        being mistaken for a burst of new failure shapes.</li>
         <li>No load testing. The 12,400/sec figure is a Go benchmark, not a cluster measurement.</li>
         <li>A custom ClusterRole must grant <code>create</code> and <code>patch</code> on
         <code>events</code> in the <strong><code>events.k8s.io</code></strong> API group, not just the

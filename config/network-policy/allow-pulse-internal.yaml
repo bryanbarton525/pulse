@@ -1,0 +1,54 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pulse-runner
+  namespace: system
+  labels:
+    app.kubernetes.io/name: pulse
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pulse-probe-runner
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              control-plane: controller-manager
+              app.kubernetes.io/name: pulse
+      ports:
+        - {port: 9090, protocol: TCP}
+    - from:
+        - namespaceSelector:
+            matchLabels: {metrics: enabled}
+      ports:
+        - {port: 9090, protocol: TCP}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pulse-incident-engine
+  namespace: system
+  labels:
+    app.kubernetes.io/name: pulse
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pulse-incident-engine
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [pulse-probe-runner, pulse]
+      ports:
+        - {port: 9090, protocol: TCP}
+    - from:
+        - namespaceSelector:
+            matchLabels: {metrics: enabled}
+      ports:
+        - {port: 9090, protocol: TCP}

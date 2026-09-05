@@ -36,7 +36,7 @@ For a real cluster smoke test, validate these stages in order:
 
 1. CRD install succeeds
 2. Controller starts without auth or RBAC errors
-3. Creating an `HttpCanary` produces the shared ConfigMap, Deployment, and Service
+3. Creating a canary produces the shared ConfigMap, runner StatefulSet, and Services
 4. Probe runner becomes Ready
 5. `/results` returns probe data
 6. `HttpCanary.status` transitions to `Healthy` or `Unhealthy`
@@ -54,8 +54,8 @@ Then inspect:
 
 ```bash
 kubectl get configmap pulse-probe-config -n pulse-system -o yaml
-kubectl get deployment pulse-probe-runner -n pulse-system
-kubectl logs -n pulse-system deploy/pulse-probe-runner
+kubectl get statefulset pulse-probe-runner -n pulse-system
+kubectl logs -n pulse-system pulse-probe-runner-0
 kubectl get httpcanary sample-http-check -n default -o yaml
 ```
 

@@ -23,6 +23,32 @@ type stubEmbedder struct {
 	vectors map[string][]float32
 }
 
+type blockingNoveltyEmbedder struct {
+	mu      sync.Mutex
+	calls   int
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingNoveltyEmbedder) Space() string   { return embed.SpacePotion }
+func (b *blockingNoveltyEmbedder) Dimensions() int { return 3 }
+func (b *blockingNoveltyEmbedder) Close() error    { return nil }
+func (b *blockingNoveltyEmbedder) Embed(ctx context.Context, texts []string) ([]embed.Vector, error) {
+	b.mu.Lock()
+	b.calls++
+	call := b.calls
+	b.mu.Unlock()
+	if call == 2 {
+		close(b.started)
+		select {
+		case <-b.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return []embed.Vector{vector(1, 0, 0)}, nil
+}
+
 func (s *stubEmbedder) Space() string   { return embed.SpacePotion }
 func (s *stubEmbedder) Dimensions() int { return 3 }
 func (s *stubEmbedder) Close() error    { return nil }
@@ -136,6 +162,91 @@ func waitForIncidents(t *testing.T, dispatcher *recordingDispatcher, count int) 
 	t.Fatalf("timed out waiting for %d dispatches", count)
 }
 
+func TestNoveltyEmbeddingDoesNotBlockReadsOrDispatchRecoveredIncident(t *testing.T) {
+	t.Parallel()
+
+	model := &blockingNoveltyEmbedder{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	dispatched := &recordingDispatcher{}
+	engine := NewEngine(EngineOptions{
+		Embedder:      model,
+		Dispatcher:    dispatched,
+		Logger:        logr.Discard(),
+		DispatchDelay: 10 * time.Millisecond,
+	})
+	engine.LoadProbes([]proberunner.Probe{
+		probeWithCorrelation("default/api", "pulse-system/app", nil),
+	})
+	now := time.Now()
+	engine.Ingest(context.Background(), failure("default/api", "failed", now))
+
+	select {
+	case <-model.started:
+	case <-time.After(time.Second):
+		t.Fatal("novelty embedding did not start")
+	}
+
+	readDone := make(chan struct{})
+	go func() {
+		_ = engine.Open()
+		close(readDone)
+	}()
+	select {
+	case <-readDone:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Open blocked behind novelty embedding")
+	}
+
+	engine.Ingest(context.Background(), observation.Observation{
+		Probe: "default/api", Kind: observation.KindRecovery, At: now.Add(time.Second),
+	})
+	close(model.release)
+	time.Sleep(30 * time.Millisecond)
+	if got := dispatched.count(); got != 0 {
+		t.Fatalf("dispatched %d recovered incidents, want 0", got)
+	}
+}
+
+func TestHealthyResultClosesIncidentAfterLostRecovery(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1000, 0)
+	engine, _ := newTestEngine(t, nil, []proberunner.Probe{
+		probeWithCorrelation("default/api", "pulse-system/app", nil),
+	})
+	reasserted := failure("default/api", "failed", now)
+	reasserted.Reassert = true
+	engine.Ingest(context.Background(), reasserted)
+	if got := len(engine.Open()); got != 1 {
+		t.Fatalf("open incidents = %d, want reasserted incident", got)
+	}
+
+	engine.ReconcileResults([]proberunner.ProbeResult{{
+		Name: "default/api", Healthy: true, LastCheckTime: now.Add(time.Second),
+	}})
+	if got := len(engine.Open()); got != 0 {
+		t.Fatalf("open incidents = %d after newer healthy result, want 0", got)
+	}
+}
+
+func TestOlderHealthyResultCannotCloseNewerFailure(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1000, 0)
+	engine, _ := newTestEngine(t, nil, []proberunner.Probe{
+		probeWithCorrelation("default/api", "pulse-system/app", nil),
+	})
+	engine.Ingest(context.Background(), failure("default/api", "failed", now))
+	engine.ReconcileResults([]proberunner.ProbeResult{{
+		Name: "default/api", Healthy: true, LastCheckTime: now.Add(-time.Second),
+	}})
+	if got := len(engine.Open()); got != 1 {
+		t.Fatalf("open incidents = %d after older healthy result, want 1", got)
+	}
+}
+
 // THE negative control. Two unrelated services failing at the same moment with
 // different failure modes must stay two incidents. If this ever merges, the
 // whole feature has degraded into "alert when several things are red".
@@ -195,6 +306,14 @@ func TestEngineMergesIdenticalFailuresIntoOneIncident(t *testing.T) {
 	if got := len(open[0].Members); got != 3 {
 		t.Fatalf("incident members = %d, want 3", got)
 	}
+	if got := len(open[0].MergeEvidence); got != 3 {
+		t.Fatalf("merge evidence = %d entries, want 3 pairwise reasons", got)
+	}
+	for _, evidence := range open[0].MergeEvidence {
+		if evidence.Type != EvidenceSimilarity || evidence.Similarity == nil || evidence.Threshold == nil {
+			t.Fatalf("similarity evidence is incomplete: %+v", evidence)
+		}
+	}
 }
 
 // Root cause and victims must be labelled from declared topology, so the page
@@ -233,6 +352,12 @@ func TestEngineNamesRootCauseFromDeclaredTopology(t *testing.T) {
 	// Ownership follows the root cause across the policy boundary.
 	if incident.Policy != "pulse-system/platform-team" {
 		t.Fatalf("Policy = %q, want the root cause's policy pulse-system/platform-team", incident.Policy)
+	}
+	if len(incident.MergeEvidence) != 1 || incident.MergeEvidence[0].Type != EvidenceDeclaredEdge {
+		t.Fatalf("MergeEvidence = %+v, want one declared-edge reason", incident.MergeEvidence)
+	}
+	if incident.MergeEvidence[0].Similarity != nil || incident.MergeEvidence[0].Threshold != nil {
+		t.Fatalf("declared edge was presented as a measured similarity: %+v", incident.MergeEvidence[0])
 	}
 
 	for _, member := range incident.Members {
@@ -436,6 +561,119 @@ func TestEngineMarksRepeatFailureShapesAsNotNovel(t *testing.T) {
 
 	if second := dispatcher.last(); second.Novel {
 		t.Fatal("a repeat of a known failure shape was marked novel")
+	}
+}
+
+func TestReassertionRefreshesOpenIncidentWithoutRedispatch(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1000, 0)
+	engine, dispatcher := newTestEngine(t,
+		map[string][]float32{"upstream refused": {1, 0, 0}},
+		[]proberunner.Probe{probeWithCorrelation("default/api", "pulse-system/app", nil)})
+
+	engine.Ingest(context.Background(), failure("default/api", "upstream refused", now))
+	waitForIncidents(t, dispatcher, 1)
+	reasserted := failure("default/api", "upstream refused", now.Add(2*time.Minute))
+	reasserted.Reassert = true
+	engine.Ingest(context.Background(), reasserted)
+	time.Sleep(3 * engine.dispatchDelay)
+	if got := dispatcher.count(); got != 1 {
+		t.Fatalf("dispatches = %d after reasserting an open incident, want 1", got)
+	}
+}
+
+func TestReassertionRebuildsLostIncidentWithoutRedispatch(t *testing.T) {
+	t.Parallel()
+
+	engine, dispatcher := newTestEngine(t,
+		map[string][]float32{"upstream refused": {1, 0, 0}},
+		[]proberunner.Probe{probeWithCorrelation("default/api", "pulse-system/app", nil)})
+
+	reasserted := failure("default/api", "upstream refused", time.Unix(1000, 0))
+	reasserted.Reassert = true
+	engine.Ingest(context.Background(), reasserted)
+	time.Sleep(3 * engine.dispatchDelay)
+
+	if got := dispatcher.count(); got != 0 {
+		t.Fatalf("dispatches = %d for a reconstructed incident, want 0", got)
+	}
+	if got := len(engine.Open()); got != 1 {
+		t.Fatalf("open incidents = %d after reconstruction, want 1", got)
+	}
+}
+
+func TestNoveltyUsesRootCausePolicyAfterDebounce(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1000, 0)
+	root := probeWithCorrelation("data/catalogue", "pulse-system/root", nil)
+	root.Intelligence.Triggers.FailureNovelty.ClusterThreshold = 0.95
+	downstream := probeWithCorrelation("shop/checkout", "pulse-system/downstream",
+		[]proberunner.ProbeDependency{{Canary: "shop/checkout", Upstream: []string{"data/catalogue"}}})
+	downstream.Intelligence.Triggers.FailureNovelty.ClusterThreshold = 0.5
+
+	engine, dispatcher := newTestEngine(t, map[string][]float32{
+		"original root": {1, 0, 0},
+		"changed root":  {0.9, 0.435, 0},
+		"victim":        {0, 0, 1},
+	}, []proberunner.Probe{root, downstream})
+
+	engine.Ingest(context.Background(), failure(root.Name, "original root", now))
+	waitForIncidents(t, dispatcher, 1)
+	engine.Ingest(context.Background(), observation.Observation{
+		Probe: root.Name, Kind: observation.KindRecovery, At: now.Add(time.Minute),
+	})
+
+	engine.Ingest(context.Background(), failure(downstream.Name, "victim", now.Add(2*time.Minute)))
+	engine.Ingest(context.Background(), failure(root.Name, "changed root", now.Add(2*time.Minute+time.Second)))
+	waitForIncidents(t, dispatcher, 2)
+	if current := dispatcher.last(); current.RootCause != root.Name || !current.Novel {
+		t.Fatalf("root=%q novel=%v, want root policy's stricter threshold to mark the changed root novel",
+			current.RootCause, current.Novel)
+	}
+}
+
+type leasedEmbedder struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (l *leasedEmbedder) Space() string   { return embed.SpaceMiniLM }
+func (l *leasedEmbedder) Dimensions() int { return 3 }
+func (l *leasedEmbedder) Close() error    { return nil }
+func (l *leasedEmbedder) Embed(context.Context, []string) ([]embed.Vector, error) {
+	close(l.started)
+	<-l.release
+	return []embed.Vector{vector(1, 0, 0)}, nil
+}
+
+func TestSetEmbedderWaitsForInFlightEmbedding(t *testing.T) {
+	t.Parallel()
+
+	old := &leasedEmbedder{started: make(chan struct{}), release: make(chan struct{})}
+	next := &stubEmbedder{vectors: map[string][]float32{}}
+	engine := NewEngine(EngineOptions{Embedder: old, Logger: logr.Discard()})
+	engine.LoadProbes([]proberunner.Probe{probeWithCorrelation("default/api", "pulse-system/app", nil)})
+
+	go engine.Ingest(context.Background(), failure("default/api", "blocked", time.Now()))
+	<-old.started
+	swapped := make(chan embed.Embedder, 1)
+	go func() { swapped <- engine.SetEmbedder(next) }()
+
+	select {
+	case <-swapped:
+		t.Fatal("model swap completed while the old embedder was still in use")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(old.release)
+	select {
+	case retired := <-swapped:
+		if retired != old {
+			t.Fatalf("retired embedder = %T, want the old model", retired)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("model swap did not complete after the embedding call finished")
 	}
 }
 
@@ -738,5 +976,45 @@ func TestChangedTriggerNotifiesAgain(t *testing.T) {
 
 	if got := dispatched.last().Trigger; got != TriggerLatencyShift {
 		t.Fatalf("Trigger = %q, want %q", got, TriggerLatencyShift)
+	}
+}
+
+// Restating an ongoing failure lets the engine rebuild its picture after a
+// restart, but it must not be counted as a new onset: the dependency learner
+// measures how often one canary fails just before another, and heartbeats
+// would let a single long outage manufacture confidence from nothing.
+func TestReassertedFailuresDoNotFeedTheDependencyLearner(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1000, 0)
+	probes := []proberunner.Probe{
+		probeWithCorrelation("data/db", "pulse-system/app", nil),
+		probeWithCorrelation("default/api", "pulse-system/app", nil),
+	}
+	for i := range probes {
+		probes[i].Intelligence.Topology.InferDependencies = true
+		probes[i].Intelligence.Topology.InferMinObservations = 2
+		probes[i].Intelligence.Topology.InferMinConfidence = 0.5
+	}
+
+	engine, _ := newTestEngine(t, map[string][]float32{"boom": {1, 0, 0}}, probes)
+
+	// One real outage, then a long stream of restatements.
+	engine.Ingest(context.Background(), failure("data/db", "boom", now))
+	engine.Ingest(context.Background(), failure("default/api", "boom", now.Add(time.Second)))
+
+	for tick := 1; tick <= 20; tick++ {
+		at := now.Add(time.Duration(tick) * 2 * time.Minute)
+		for _, probe := range []string{"data/db", "default/api"} {
+			signal := failure(probe, "boom", at)
+			signal.Reassert = true
+			engine.Ingest(context.Background(), signal)
+		}
+	}
+
+	// A single co-occurrence is below the two-observation floor, so nothing
+	// should be proposed. Counting the restatements would sail past it.
+	if got := engine.Proposals(); len(got) != 0 {
+		t.Fatalf("Proposals() = %+v; restatements were counted as onsets", got)
 	}
 }

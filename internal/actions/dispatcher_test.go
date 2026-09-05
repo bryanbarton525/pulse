@@ -93,6 +93,38 @@ func TestDispatcherRunsActionsInDeclaredOrderAndChainsInvestigation(t *testing.T
 	}
 }
 
+func TestDispatcherSkipsLLMForKnownFailureShape(t *testing.T) {
+	t.Parallel()
+
+	llm := &fakeAction{name: "investigate", kind: TypeLLM, result: "analysis"}
+	slack := &fakeAction{name: "notify", kind: TypeSlack}
+	dispatcher := newTestDispatcher(t)
+	installPolicy(dispatcher, policyApp, NewThrottle(0, 0), llm, slack)
+	current := testIncident()
+	current.Policy = policyApp
+	current.Trigger = incident.TriggerFailureCorrelation
+	current.Novel = false
+	dispatcher.mu.Lock()
+	dispatcher.probes[current.RootCause] = proberunner.Probe{
+		Name: current.RootCause,
+		Intelligence: &proberunner.ProbeIntelligence{
+			Policy: policyApp,
+			Triggers: proberunner.ProbeTriggers{
+				FailureNovelty: &proberunner.ProbeFailureNoveltyTrigger{},
+			},
+		},
+	}
+	dispatcher.mu.Unlock()
+
+	dispatcher.Dispatch(context.Background(), current)
+	if got := llm.count(); got != 0 {
+		t.Fatalf("known failure invoked the LLM %d times, want 0", got)
+	}
+	if got := slack.count(); got != 1 {
+		t.Fatalf("known failure sent %d notifications, want 1", got)
+	}
+}
+
 // One broken sink must not silence the others.
 func TestDispatcherContinuesAfterAnActionFails(t *testing.T) {
 	t.Parallel()
@@ -330,5 +362,83 @@ func TestLoadCompilesEachPolicyOnce(t *testing.T) {
 
 	if policies != 1 {
 		t.Fatalf("compiled %d policies for 500 probes sharing one, want 1", policies)
+	}
+}
+
+// A config reload must not hand a flapping canary a clean throttle.
+//
+// The controller rewrites the probe ConfigMap whenever a canary's status
+// changes, so reloads arrive at exactly the rate the throttle is there to damp.
+// If Load rebuilt the throttle, every reload would forgive the cooldown and the
+// canary would page on every check.
+func TestLoadPreservesThrottleHistoryAcrossReloads(t *testing.T) {
+	t.Parallel()
+
+	probes := []proberunner.Probe{{
+		Name: "shop/unrelated",
+		Intelligence: &proberunner.ProbeIntelligence{
+			Policy:   policyApp,
+			Actions:  []proberunner.ProbeAction{{Name: "notify", Type: "metric"}},
+			Throttle: proberunner.ProbeThrottle{CooldownSeconds: 900, MaxPerHour: 4},
+		},
+	}}
+
+	dispatcher := newTestDispatcher(t)
+	if err := dispatcher.Load(probes, CredentialMap{}, nil); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	current := testIncident()
+	current.Policy = policyApp
+	dispatcher.Dispatch(context.Background(), current)
+
+	// The canary flaps; the controller rewrites the ConfigMap; the engine reloads.
+	if err := dispatcher.Load(probes, CredentialMap{}, nil); err != nil {
+		t.Fatalf("Load() on reload error = %v", err)
+	}
+
+	dispatcher.mu.Lock()
+	throttle := dispatcher.throttles[policyApp]
+	dispatcher.mu.Unlock()
+
+	if throttle.Allow(current.Signature, "notify") {
+		t.Fatal("a reload cleared the throttle history, so the same incident " +
+			"was allowed to fire again inside its cooldown")
+	}
+}
+
+// Editing the limits is a deliberate act, so it starts clean.
+func TestLoadResetsThrottleWhenTheLimitsChange(t *testing.T) {
+	t.Parallel()
+
+	probe := proberunner.Probe{
+		Name: "shop/unrelated",
+		Intelligence: &proberunner.ProbeIntelligence{
+			Policy:   policyApp,
+			Actions:  []proberunner.ProbeAction{{Name: "notify", Type: "metric"}},
+			Throttle: proberunner.ProbeThrottle{CooldownSeconds: 900, MaxPerHour: 4},
+		},
+	}
+
+	dispatcher := newTestDispatcher(t)
+	if err := dispatcher.Load([]proberunner.Probe{probe}, CredentialMap{}, nil); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	current := testIncident()
+	current.Policy = policyApp
+	dispatcher.Dispatch(context.Background(), current)
+
+	probe.Intelligence.Throttle.CooldownSeconds = 60
+	if err := dispatcher.Load([]proberunner.Probe{probe}, CredentialMap{}, nil); err != nil {
+		t.Fatalf("Load() after edit error = %v", err)
+	}
+
+	dispatcher.mu.Lock()
+	throttle := dispatcher.throttles[policyApp]
+	dispatcher.mu.Unlock()
+
+	if !throttle.Allow(current.Signature, "notify") {
+		t.Fatal("an edited throttle kept the old history instead of starting clean")
 	}
 }

@@ -1,0 +1,819 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Bring Pulse up on kind with every canary type, then run ten narrated scenarios covering assertions, drift, latency, protocol failures, topology and model correlation, novelty, and simulated LLM investigation.">
+<title>Pulse Local Quick Start</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap">
+
+<style>
+  /* Tokens are lifted from docs/model-intelligence.html on purpose: the two
+     pages are siblings and the hot/cold hues mean the same thing on both. */
+  :root {
+    --ground:      #F5F7F9;
+    --surface:     #FFFFFF;
+    --surface-alt: #EEF2F5;
+    --ink:         #16212C;
+    --ink-soft:    #3D4C5A;
+    --muted:       #64798C;
+    --rule:        #D8E0E7;
+    --rule-strong: #B9C6D1;
+
+    /* Warm is the hot path (potion, every passing check). Cool is the cold
+       path (MiniLM, failures only). */
+    --hot:      #B4541C;
+    --hot-soft: #F4E5DB;
+    --cold:      #216F84;
+    --cold-soft: #DCEBEF;
+
+    /* Canary state. Deliberately separate from the two path hues — a red
+       canary is not "the hot path", it is a broken service. */
+    --ok:    #2E6B45;
+    --bad:   #A32B26;
+    --watch: #8A6510;
+
+    --code-bg: #16212C;
+    --code-ink: #DCE6EE;
+    --code-dim: #7E93A6;
+
+    --measure: 68ch;
+    --step--1: 0.83rem;
+    --step-0:  1rem;
+    --step-1:  1.22rem;
+    --step-2:  1.55rem;
+    --step-3:  2.05rem;
+    --step-4:  2.75rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0E1620;
+      --surface:     #16202B;
+      --surface-alt: #1D2A37;
+      --ink:         #E4EBF1;
+      --ink-soft:    #B7C4CF;
+      --muted:       #8496A6;
+      --rule:        #263543;
+      --rule-strong: #35485A;
+
+      --hot:      #E4884F;
+      --hot-soft: #33221A;
+      --cold:      #63B8CE;
+      --cold-soft: #122A32;
+
+      --ok:    #6BBE88;
+      --bad:   #E8817C;
+      --watch: #D5A648;
+
+      --code-bg: #080D13;
+      --code-ink: #D3DFE9;
+      --code-dim: #6B8093;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #0E1620;
+    --surface:     #16202B;
+    --surface-alt: #1D2A37;
+    --ink:         #E4EBF1;
+    --ink-soft:    #B7C4CF;
+    --muted:       #8496A6;
+    --rule:        #263543;
+    --rule-strong: #35485A;
+
+    --hot:      #E4884F;
+    --hot-soft: #33221A;
+    --cold:      #63B8CE;
+    --cold-soft: #122A32;
+
+    --ok:    #6BBE88;
+    --bad:   #E8817C;
+    --watch: #D5A648;
+
+    --code-bg: #080D13;
+    --code-ink: #D3DFE9;
+    --code-dim: #6B8093;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    font-size: var(--step-0);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 76rem;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 3.25rem;
+  }
+
+  /* ── Masthead ─────────────────────────────────────────────── */
+
+  .masthead { display: flex; flex-direction: column; gap: 1rem; max-width: var(--measure); }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: var(--step--1);
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  h1 {
+    font-family: Newsreader, ui-serif, Georgia, serif;
+    font-size: var(--step-4);
+    font-weight: 500;
+    line-height: 1.08;
+    letter-spacing: -0.015em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    font-size: var(--step-1);
+    line-height: 1.5;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+
+  .ledger {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 2rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--rule);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: var(--step--1);
+    color: var(--muted);
+  }
+  .ledger b { color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+  /* ── Sections ─────────────────────────────────────────────── */
+
+  section { display: flex; flex-direction: column; gap: 1.25rem; }
+
+  h2 {
+    font-family: Newsreader, ui-serif, Georgia, serif;
+    font-size: var(--step-3);
+    font-weight: 500;
+    line-height: 1.15;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: var(--step-1);
+    font-weight: 600;
+    line-height: 1.3;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  p { margin: 0; max-width: var(--measure); }
+  .lede { color: var(--ink-soft); }
+
+  a { color: var(--cold); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--cold);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.9em;
+    background: var(--surface-alt);
+    padding: 0.08em 0.34em;
+    border-radius: 3px;
+  }
+
+  /* ── The step spine ───────────────────────────────────────── */
+  /* Numbered because the order is load-bearing: nothing here works if you
+     run it out of sequence. */
+
+  .steps { display: flex; flex-direction: column; gap: 2rem; counter-reset: step; }
+
+  .step {
+    display: grid;
+    grid-template-columns: 3rem 1fr;
+    gap: 0 1.25rem;
+    align-items: start;
+  }
+
+  .step::before {
+    counter-increment: step;
+    content: counter(step, decimal-leading-zero);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: var(--step--1);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--cold);
+    padding-top: 0.35rem;
+    border-top: 2px solid var(--cold);
+  }
+
+  .step-body { display: flex; flex-direction: column; gap: 0.85rem; min-width: 0; }
+
+  /* ── Command blocks ───────────────────────────────────────── */
+
+  pre {
+    margin: 0;
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border-radius: 5px;
+    padding: 0.95rem 1.15rem;
+    overflow-x: auto;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: var(--step--1);
+    line-height: 1.62;
+    tab-size: 2;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+  pre .p { color: var(--code-dim); }      /* prompt marker and comments */
+  pre .o { color: #9FC7A8; }              /* sample output */
+
+  /* ── Tables ───────────────────────────────────────────────── */
+
+  .scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 5px; background: var(--surface); }
+
+  table { border-collapse: collapse; width: 100%; font-size: var(--step--1); }
+  th, td { text-align: left; padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  thead th {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: var(--surface-alt);
+    white-space: nowrap;
+  }
+  td.mono, th.mono { font-family: "IBM Plex Mono", ui-monospace, monospace; white-space: nowrap; }
+
+  .pill {
+    display: inline-block;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 0.12rem 0.45rem;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .pill.hot  { background: var(--hot-soft);  color: var(--hot); }
+  .pill.cold { background: var(--cold-soft); color: var(--cold); }
+  .pill.none { background: var(--surface-alt); color: var(--muted); }
+
+  .state { font-weight: 600; }
+  .state.ok    { color: var(--ok); }
+  .state.bad   { color: var(--bad); }
+  .state.watch { color: var(--watch); }
+
+  /* ── Scenario cards: two tracks, keyed to the two models ──── */
+
+  .scenarios { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 1.25rem; }
+
+  .scenario {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-top: 3px solid var(--rule-strong);
+    border-radius: 5px;
+    padding: 1.25rem;
+  }
+  .scenario.is-hot  { border-top-color: var(--hot); }
+  .scenario.is-cold { border-top-color: var(--cold); }
+  .scenario p { max-width: none; font-size: 0.95rem; }
+  .scenario pre { font-size: 0.78rem; }
+
+  .scenario-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
+
+  .expect {
+    margin: 0;
+    padding: 0.7rem 0.9rem;
+    background: var(--surface-alt);
+    border-radius: 4px;
+    font-size: 0.88rem;
+    color: var(--ink-soft);
+  }
+  .expect b { color: var(--ink); }
+
+  /* ── Callout ──────────────────────────────────────────────── */
+
+  .note {
+    border-left: 3px solid var(--watch);
+    padding: 0.15rem 0 0.15rem 1rem;
+    color: var(--ink-soft);
+    max-width: var(--measure);
+    font-size: 0.95rem;
+  }
+
+  details {
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    background: var(--surface);
+    padding: 0.75rem 1rem;
+  }
+  summary { cursor: pointer; font-weight: 600; font-size: 0.95rem; }
+  details > *:not(summary) { margin-top: 0.75rem; }
+
+  hr { border: none; border-top: 1px solid var(--rule); margin: 0; }
+
+  footer {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--rule);
+    font-size: var(--step--1);
+    color: var(--muted);
+    max-width: var(--measure);
+  }
+
+  @media (max-width: 40rem) {
+    :root { --step-4: 2.1rem; --step-3: 1.6rem; }
+    .step { grid-template-columns: 2.25rem 1fr; gap: 0 0.85rem; }
+  }
+</style>
+</head>
+
+<div class="page">
+
+  <header class="masthead">
+    <div class="eyebrow">Pulse · quick start</div>
+    <h1>Pulse Local Quick Start</h1>
+    <p class="standfirst">One <code>make</code> target builds a kind cluster, the operator, a small
+      shop to monitor, and a canary of every type Pulse supports. Ten narrated
+      scenarios then exercise every synthetic shape and intelligence trigger.
+      The narrated tour prints the live evidence at every stage, so this is a
+      system walkthrough rather than a pass/fail smoke test.</p>
+    <div class="ledger">
+      <span><b>10</b> canaries</span>
+      <span><b>6</b> canary shapes</span>
+      <span><b>10</b> narrated scenarios</span>
+      <span><b>0</b> external API keys</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Before you start</h2>
+    <p class="lede">Everything runs locally. The demo never calls out to Slack, Datadog or an LLM
+      provider — a small sink pod stands in for all three and records what it was sent, so you can
+      read the real payloads back with <code>kubectl logs</code>.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th class="mono">need</th><th>why</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">kind</td><td>Creates the single-node cluster from <code>hack/demo/kind.yaml</code>.</td></tr>
+          <tr><td class="mono">kubectl</td><td>Everything the Makefile and the scenario script do.</td></tr>
+          <tr><td class="mono">podman <span class="pill none">or</span> docker</td><td>Builds the operator images and one deterministic demo-target image. Pass <code>CONTAINER_TOOL=podman</code> if you use podman.</td></tr>
+          <tr><td class="mono">python3</td><td><code>make fetch-models</code> downloads and converts the two models. Standard library only.</td></tr>
+          <tr><td class="mono">go 1.26+</td><td>Generating manifests. <code>kustomize</code> and friends are downloaded into <code>bin/</code> for you.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Budget roughly 4&nbsp;GB of RAM and 6&nbsp;GB of disk for the cluster and images. The
+      converted model artifacts baked into the images are roughly 210&nbsp;MiB; downloads and conversion
+      cache can bring <code>hack/models/</code> to roughly 335&nbsp;MB. It is gitignored and reused.</p>
+  </section>
+
+  <hr>
+
+  <section>
+    <h2>Bring it up</h2>
+    <p class="lede">One command does all five steps below. They are broken out so you can see what
+      it did, and so you can re-run any single one after a change.</p>
+
+    <pre><code><span class="p"># podman users: add CONTAINER_TOOL=podman to every make command on this page</span>
+make demo-up</code></pre>
+    <p class="note">Every demo command explicitly targets <code>kind-pulse-demo</code>; it does not change
+      or trust your current kubeconfig context. Use <code>DEMO_CLUSTER=my-name</code> consistently to
+      choose another dedicated Kind cluster. Startup is ordered even when Make is invoked with
+      parallel jobs.</p>
+
+    <div class="steps">
+
+      <div class="step">
+        <div class="step-body">
+          <h3>Create the cluster</h3>
+          <p>A single-node kind cluster called <code>pulse-demo</code>. If it already exists this is a
+            no-op, so the whole quick start is safe to re-run.</p>
+          <pre><code>make demo-cluster</code></pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-body">
+          <h3>Build the images and load them into kind</h3>
+          <p>Four images: three Pulse components plus the deterministic demo target. The probe runner stays
+            <code>CGO_ENABLED=0</code> on <code>distroless/static</code> with the static
+            <span class="pill hot">potion</span> model baked in; only the incident engine carries ONNX
+            Runtime and <span class="pill cold">MiniLM</span>.</p>
+          <pre><code>make demo-images</code></pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-body">
+          <h3>Install the CRDs</h3>
+          <p>Three kinds: <code>HttpCanary</code>, <code>GrpcCanary</code>, and the
+            <code>AnomalyPolicy</code> that carries every model, trigger and action setting.</p>
+          <pre><code>make demo-install</code></pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-body">
+          <h3>Deploy the operator</h3>
+          <p>The controller lands in <code>pulse-system</code>. It creates the probe-runner
+            StatefulSet itself, and creates the incident engine <em>only</em> once some canary opts
+            into a policy — a cluster that never uses this feature never gets the extra pod.</p>
+          <pre><code>make demo-deploy</code></pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-body">
+          <h3>Deploy the shop, the sink, the policy and the canaries</h3>
+          <p>Six target deployments in namespace <code>shop</code>, the recording sink in
+            <code>pulse-demo</code>, one <code>AnomalyPolicy</code>, and ten canaries.</p>
+          <pre><code>make demo-workloads</code></pre>
+        </div>
+      </div>
+
+    </div>
+
+    <p>The target waits for every deployment and canary to become ready before it returns. Start with
+      the system view: it explains the data path, resolved models, action order, live validations and
+      active-versus-proposed topology using reads from the running cluster.</p>
+    <pre><code>make demo-explain</code></pre>
+    <p>For a compact live table, use the command below. It reports the live result age separately
+      from persisted CR status and labels detector warmup; the rows shown here are illustrative,
+      not invented output from your cluster.</p>
+    <pre><code>make demo-status
+
+<span class="o">CANARY          PHASE     TRIGGER   SCORE   NOVEL   INCIDENT   ROLE</span>
+<span class="o">catalogue       Healthy   &lt;none&gt;    &lt;none&gt;  &lt;none&gt;  &lt;none&gt;     &lt;none&gt;</span>
+<span class="o">checkout        Healthy   &lt;none&gt;    &lt;none&gt;  &lt;none&gt;  &lt;none&gt;     &lt;none&gt;</span>
+<span class="o">search          Healthy   &lt;none&gt;    &lt;none&gt;  &lt;none&gt;  &lt;none&gt;     &lt;none&gt;</span>
+<span class="o">no-content      Healthy   &lt;none&gt;    &lt;none&gt;  &lt;none&gt;  &lt;none&gt;     &lt;none&gt;</span>
+<span class="o">login-journey   Healthy   &lt;none&gt;    &lt;none&gt;  &lt;none&gt;  &lt;none&gt;     &lt;none&gt;</span>
+<span class="o">mcp-tools       Healthy   &lt;none&gt;    &lt;none&gt;  &lt;none&gt;  &lt;none&gt;     &lt;none&gt;</span>
+<span class="o">orders          Healthy   &lt;none&gt;    &lt;none&gt;  &lt;none&gt;  &lt;none&gt;     &lt;none&gt;</span>
+<span class="o">similar-a       Healthy   &lt;none&gt;    &lt;none&gt;  &lt;none&gt;  &lt;none&gt;     &lt;none&gt;</span>
+<span class="o">similar-b       Healthy   &lt;none&gt;    &lt;none&gt;  &lt;none&gt;  &lt;none&gt;     &lt;none&gt;</span>
+<span class="o">unrelated       Healthy   &lt;none&gt;    &lt;none&gt;  &lt;none&gt;  &lt;none&gt;     &lt;none&gt;</span></code></pre>
+    <p class="note"><code>unrelated</code> starts healthy. The outage scenario breaks it at the same
+      time with a distinct content-contract failure and asserts that it remains a separate incident.</p>
+  </section>
+
+  <hr>
+
+  <section>
+    <h2>What is being monitored</h2>
+    <p class="lede">One canary per shape Pulse supports, so the demo doubles as a worked example of
+      every field. All ten opt into the same policy with the same two-line block; delete that block
+      from any of them and it goes straight back to being an ordinary pass/fail check.</p>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th class="mono">canary</th><th class="mono">kind</th><th>what it exercises</th><th class="mono">target</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">catalogue</td><td class="mono">HttpCanary</td>
+            <td>Status code plus a <code>containsText</code> body assertion. The drift baseline is built here.</td>
+            <td class="mono">demo-target Go service</td>
+          </tr>
+          <tr>
+            <td class="mono">checkout</td><td class="mono">HttpCanary</td>
+            <td>A declared downstream of <code>catalogue</code> in <code>spec.topology</code>.</td>
+            <td class="mono">real catalogue caller</td>
+          </tr>
+          <tr>
+            <td class="mono">search</td><td class="mono">HttpCanary</td>
+            <td>The second declared downstream — two dependents prove the incident is collapsed, not paired.</td>
+            <td class="mono">real catalogue caller</td>
+          </tr>
+          <tr>
+            <td class="mono">no-content</td><td class="mono">HttpCanary</td>
+            <td>A non-200 expectation (<code>expectedStatus: 204</code>).</td>
+            <td class="mono">demo-target Go service</td>
+          </tr>
+          <tr>
+            <td class="mono">login-journey</td><td class="mono">HttpCanary</td>
+            <td>A two-step scripted journey sharing one client and cookie jar across steps.</td>
+            <td class="mono">demo-target Go service</td>
+          </tr>
+          <tr>
+            <td class="mono">mcp-tools</td><td class="mono">HttpCanary</td>
+            <td>A real MCP handshake: <code>initialize</code>, <code>notifications/initialized</code>, <code>tools/list</code>, then asserts <code>health.check</code> is offered.</td>
+            <td class="mono">demo-target Go service</td>
+          </tr>
+          <tr>
+            <td class="mono">orders</td><td class="mono">GrpcCanary</td>
+            <td>Standard <code>grpc.health.v1</code> health checking.</td>
+            <td class="mono">demo-target Go service</td>
+          </tr>
+          <tr>
+            <td class="mono">similar-a / similar-b</td><td class="mono">HttpCanary</td>
+            <td>An identical failure pair with no declared edge, used to prove model-only similarity correlation.</td>
+            <td class="mono">independent Go service</td>
+          </tr>
+          <tr>
+            <td class="mono">unrelated</td><td class="mono">HttpCanary</td>
+            <td>A healthy control that is failed alongside the outage with a distinct content-contract error.</td>
+            <td class="mono">independent Go service</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>The opt-in is exactly this, on every one of them:</p>
+    <pre><code><span class="p">  # hack/demo/20-canaries.yaml</span>
+  intelligence:
+    policyRef: {name: demo-triage, namespace: pulse-system}</code></pre>
+
+    <details>
+      <summary>What the demo policy turns on</summary>
+      <p>All four triggers, both declared dependency edges, and all four action types pointed at the
+        local sink. Demo overrides are explicit: drift warmup is 5 instead of 20, latency warmup is
+        8 instead of 30, novelty uses <code>0.999</code> and 1 second instead of <code>0.80</code> and
+        300 seconds, and throttling is 0/50 instead of 900/4. These shorten isolated chapters; the
+        primary drift, latency and correlation thresholds retain their defaults.</p>
+      <pre><code><span class="p"># hack/demo/10-policy.yaml, abridged</span>
+spec:
+  triggers:
+    bodyDrift:          {enabled: true, threshold: "0.15", warmupChecks: 5, consecutiveBreaches: 2}
+    latencyShift:       {enabled: true, zScoreThreshold: "3.0", warmupChecks: 8}
+    failureCorrelation: {enabled: true, windowSeconds: 120, similarityThreshold: "0.85"}
+    failureNovelty:     {enabled: true, clusterThreshold: "0.999", settlingPeriodSeconds: 1}
+  topology:
+    dependsOn:
+      - {canary: shop/checkout, upstream: [shop/catalogue]}
+      - {canary: shop/search,   upstream: [shop/catalogue]}
+    inferDependencies: true
+  actions:
+    - {name: local,       type: metric}          <span class="p"># Prometheus incident counter</span>
+    - {name: investigate, type: llm}             <span class="p"># one call per incident, not per canary</span>
+    - {name: notify,      type: slack}           <span class="p"># reads the investigation the llm action wrote</span>
+    - {name: ship-logs,   type: observability}   <span class="p"># provider: datadog</span>
+  # Keep local scenario replays deterministic; production policies normally use a cooldown.
+  throttle: {cooldownSeconds: 0, maxPerHour: 50}</code></pre>
+    </details>
+    <p class="note"><strong>Keep the evidence layers separate:</strong> protocol assertions decide
+      pass/fail; Potion compares passing HTTP bodies; EWMA statistics detect latency without a model;
+      MiniLM compares failure text or clusters replay novelty. Declared topology can merge an incident
+      without MiniLM. Graph/onset ranking chooses the root cause; the deterministic local LLM fixture
+      only writes a human-readable investigation after that decision. A zero score is meaningful only
+      when the live detector state says <code>ready</code>.</p>
+  </section>
+
+  <hr>
+
+  <section>
+    <h2>Make it fire</h2>
+    <p class="lede">Ten scenarios cover every canary shape and both intelligence tiers. Each command
+      first explains the validation, mutation and internal path, then prints the live probe result,
+      model decision, incident graph and newly dispatched payloads. Assertions still stop the run if
+      that evidence contradicts the explanation.</p>
+
+    <pre><code><span class="p"># the complete narrated walkthrough</span>
+make demo-tour
+make demo-tour-paced     <span class="p"># pause with each failure live so you can inspect it</span>
+
+<span class="p"># demo-scenarios is an equivalent alias; run individual chapters below</span></code></pre>
+
+    <pre><code>make demo-green-deploy   <span class="p"># semantic body drift while status remains 200</span>
+make demo-latency        <span class="p"># slow catalogue latency propagates to its two real callers</span>
+make demo-http-contract  <span class="p"># expected 204 changes to 200</span>
+make demo-content        <span class="p"># status stays 200 but a required body marker disappears</span>
+make demo-journey        <span class="p"># second journey step violates its assertion</span>
+make demo-mcp            <span class="p"># tools/list loses health.check</span>
+make demo-grpc           <span class="p"># grpc.health.v1 reports NOT_SERVING</span>
+make demo-outage         <span class="p"># one upstream failure creates two real downstream failures</span>
+make demo-similarity     <span class="p"># MiniLM-only merge with no declared topology</span>
+make demo-novelty        <span class="p"># repeat shape reports novel=false and skips the LLM</span></code></pre>
+
+    <div class="scenarios">
+
+      <article class="scenario is-hot">
+        <div class="scenario-head">
+          <h3>A passing rollout that is wrong</h3>
+          <span class="pill hot">potion · hot path</span>
+        </div>
+        <p>Changes the catalogue Deployment's behavior while it still answers <code>200</code> with well-formed JSON — but the collection
+          comes back empty. A bad feature flag, a query regression, an index that never finished
+          rebuilding.</p>
+        <pre><code>make demo-green-deploy</code></pre>
+        <p class="expect"><b>Expect:</b> <code>catalogue</code> stays
+          <span class="state ok">Healthy</span> while <code>status.intelligence.trigger</code> becomes
+          <code>bodyDrift</code>. No status code and no <code>containsText</code> assertion catches
+          this, because nothing about the response is malformed — only its <em>meaning</em> changed.</p>
+      </article>
+
+      <article class="scenario is-cold">
+        <div class="scenario-head">
+          <h3>A correlated outage</h3>
+          <span class="pill cold">MiniLM · cold path</span>
+        </div>
+        <p>Breaks the catalogue. <code>checkout</code> and <code>search</code> read from it, so three
+          canaries go red within one window. The script simultaneously gives <code>unrelated</code> a
+          different content-contract failure as a negative control.</p>
+        <pre><code>make demo-outage</code></pre>
+        <p class="expect"><b>Expect:</b> <em>one</em> incident spanning three canaries, with
+          <code>catalogue</code> as <code>rootCause</code> and the other two <code>downstream</code>;
+          one LLM investigation and one Slack message, not three. The merge reason is the declared
+          dependency edge; this chapter does not claim MiniLM was necessary. And
+          <code>unrelated</code> in an incident of its <em>own</em> — simultaneity alone is not
+          treated as evidence.</p>
+      </article>
+
+      <article class="scenario is-cold">
+        <div class="scenario-head">
+          <h3>A model-only merge</h3>
+          <span class="pill cold">MiniLM · cold path</span>
+        </div>
+        <p>Breaks <code>similar-a</code> and <code>similar-b</code> with the same assertion failure.
+          They have no declared dependency. A simultaneous, dissimilar gRPC failure is the negative control.</p>
+        <pre><code>make demo-similarity</code></pre>
+        <p class="expect"><b>Expect:</b> the pair shares one incident whose <code>mergeEvidence</code>
+          records measured similarity and threshold; the gRPC control has a different incident ID.</p>
+      </article>
+
+      <article class="scenario is-cold">
+        <div class="scenario-head">
+          <h3>A failure you have seen before</h3>
+          <span class="pill cold">MiniLM · cold path</span>
+        </div>
+        <p>Restores the catalogue, then breaks it again the same way. The failure text clusters with
+          what the engine already saw.</p>
+        <pre><code>make demo-novelty</code></pre>
+        <p class="expect"><b>Expect:</b> the incident opens again, but the second occurrence does not
+          earn a fresh investigation. Slack and observability still receive one record for the new
+          incident; novelty gates only the expensive LLM step.</p>
+      </article>
+
+    </div>
+
+    <p>Put everything back whenever you want:</p>
+    <pre><code>make demo-restore</code></pre>
+    <p class="note">Restore returns every target—including the negative control—to
+      <span class="state ok">Healthy</span> and waits until every incident is closed.</p>
+  </section>
+
+  <hr>
+
+  <section>
+    <h2>Read what happened</h2>
+    <p class="lede">The tour prints these views automatically. The commands remain useful while you
+      pause the demo, alter a validation, or debug a result of your own.</p>
+
+    <div class="steps" style="counter-reset: none;">
+      <div class="step" style="grid-template-columns: 1fr;">
+        <div class="step-body">
+          <h3>What the model concluded</h3>
+          <pre><code>make demo-status
+
+<span class="o">CANARY      PHASE       TRIGGER             NOVEL  INCIDENT      ROLE</span>
+<span class="o">catalogue   Unhealthy   failureCorrelation  true   inc-7f2a91    rootCause</span>
+<span class="o">checkout    Unhealthy   failureCorrelation  true   inc-7f2a91    downstream</span>
+<span class="o">search      Unhealthy   failureCorrelation  true   inc-7f2a91    downstream</span>
+<span class="o">unrelated   Unhealthy   failureCorrelation  true   inc-1c04be    rootCause</span></code></pre>
+          <p>Two incident IDs across four red canaries. That split is the whole design.</p>
+          <pre><code>make demo-incidents   <span class="p"># member signals, roles, merge evidence, signatures and investigation</span>
+make demo-topology    <span class="p"># active declared edges vs learned proposals</span></code></pre>
+        </div>
+      </div>
+
+      <div class="step" style="grid-template-columns: 1fr;">
+        <div class="step-body">
+          <h3>What the actions actually sent</h3>
+          <p>The sink logs every request it receives, up to a documented 64 KiB body limit with
+            explicit truncation metadata. This renders every matching LLM prompt, plain-Markdown
+            Slack message, and Datadog log entry that was really posted. The LLM
+            response is deterministic and labels itself as simulated; no external inference occurs.
+            Credential values are never printed.</p>
+          <pre><code>make demo-show</code></pre>
+        </div>
+      </div>
+
+      <div class="step" style="grid-template-columns: 1fr;">
+        <div class="step-body">
+          <h3>The investigation, on the canary itself</h3>
+          <p>The <code>llm</code> action writes its markdown root-cause analysis straight back into the
+            root cause's status, so it is on the object you were already looking at.</p>
+          <pre><code>kubectl --context kind-pulse-demo -n shop get httpcanary catalogue \
+  -o jsonpath='{.status.intelligence.investigation}'</code></pre>
+          <p>Kubernetes Events are recorded too, on the canaries themselves:</p>
+          <pre><code>make demo-events</code></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr>
+
+  <section>
+    <h2>Validation lab</h2>
+    <p class="lede">The end of the tour is the beginning of the useful part: change a contract,
+      observe the same surfaces Pulse uses, then restore it. The lab maps every validation to its
+      configuration field, worked canary and narrated scenario.</p>
+    <pre><code>make demo-lab                         <span class="p"># list every validation surface</span>
+make demo-lab VALIDATION=mcp          <span class="p"># inspect the live MCP spec and status</span>
+make demo-validate VALIDATION=mcp     <span class="p"># run that narrated experiment</span>
+make demo-inspect CANARY=mcp-tools    <span class="p"># desired spec + observed status</span></code></pre>
+    <p>To create a validation failure without changing the demo application, change the canary's
+      assertion itself. This example asks for a body marker the catalogue does not return:</p>
+    <pre><code>kubectl --context kind-pulse-demo -n shop patch httpcanary unrelated --type merge \
+  -p '{"spec":{"containsText":"a-marker-that-is-not-present"}}'
+
+make demo-inspect CANARY=unrelated
+make demo-incidents
+
+<span class="p"># recreate only the demo-owned definitions, then restore behavior</span>
+make demo-reset-definitions
+make demo-restore</code></pre>
+    <p>The same loop applies to <code>expectedStatus</code>, each <code>journey[]</code> step,
+      <code>mcp.requiredTools</code>, the gRPC <code>service</code>, per-canary drift/latency overrides,
+      policy correlation thresholds and novelty clustering.</p>
+
+    <h3>Further experiments</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>try</th><th class="mono">how</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Turn intelligence off for one canary and watch it revert to plain pass/fail</td>
+            <td class="mono">kubectl -n shop edit httpcanary search<br>→ delete <code>spec.intelligence</code></td>
+          </tr>
+          <tr>
+            <td>Shard the probe runner and confirm correlation still merges across pods</td>
+            <td class="mono">kubectl -n pulse-system set env deploy/pulse-controller-manager \<br>&nbsp;&nbsp;PULSE_PROBE_RUNNER_SHARDS=3</td>
+          </tr>
+          <tr>
+            <td>See the dependency edges the engine proposed on its own</td>
+            <td class="mono">kubectl -n pulse-system get anomalypolicy demo-triage \<br>&nbsp;&nbsp;-o jsonpath='{.status.inferredDependencies}'</td>
+          </tr>
+          <tr>
+            <td>Watch the drift score move in Prometheus terms</td>
+            <td class="mono">kubectl -n pulse-system port-forward sts/pulse-probe-runner 9090<br>curl -s localhost:9090/metrics | grep drift_score</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Inferred edges are <em>proposals only</em>. They appear in policy status for a human
+      to promote into <code>spec.topology.dependsOn</code>; nothing merges an incident on an inferred
+      edge alone.</p>
+  </section>
+
+  <hr>
+
+  <section>
+    <h2>When the evidence does not appear</h2>
+    <div class="scroll"><table><thead><tr><th>symptom</th><th>what to verify</th></tr></thead><tbody>
+      <tr><td>Wrong or missing cluster</td><td>Run <code>kubectl --context kind-pulse-demo cluster-info</code>, or pass the same <code>DEMO_CLUSTER</code> to every Make target.</td></tr>
+      <tr><td>Image pull or rollout stalls</td><td>Inspect pods and events in <code>pulse-system</code> and <code>shop</code>; rerun <code>make demo-images demo-deploy demo-workloads</code>.</td></tr>
+      <tr><td>No result / stale result</td><td><code>make demo-status</code> marks missing and older-than-45-second live results. Do not interpret missing as a zero score.</td></tr>
+      <tr><td>Detector says warming</td><td>Wait for the configured number of normal, interval-paced checks. There is no startup burst; do not restart a runner while the target is broken.</td></tr>
+      <tr><td>No LLM request</td><td>Inspect <code>novel</code>, settling, cooldown, and hourly rate limits. A known incident intentionally skips LLM but still sends Slack and observability actions.</td></tr>
+      <tr><td>Viewer warns about truncation</td><td>The sink received more than 64 KiB. The warning includes the original byte count; use a smaller bounded demo payload.</td></tr>
+      <tr><td>An interrupted tour left failures live</td><td>Run <code>make demo-restore</code>. If definitions were edited, run <code>make demo-reset-definitions</code> first.</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <hr>
+
+  <section>
+    <h2>Tear it down</h2>
+    <pre><code>make demo-down</code></pre>
+    <p>Deletes the kind cluster and nothing else. The downloaded models stay in
+      <code>hack/models/</code> so the next <code>make demo-up</code> skips the download.</p>
+  </section>
+
+  <footer>
+    <p>The design behind all of this — why there are two models, what a cosine distance actually
+      measures, and how the drift score is computed — is in the
+      <a href="model-intelligence.html">model intelligence guide</a>.</p>
+    <p>Demo sources: <code>hack/demo/</code> · Makefile targets: <code>make help</code></p>
+  </footer>
+
+</div>
+</html>

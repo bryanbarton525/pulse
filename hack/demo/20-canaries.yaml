@@ -1,0 +1,144 @@
+# One canary of every kind Pulse supports, all opted into the same policy.
+#
+# Delete the `intelligence` block from any of these and it goes back to being an
+# ordinary pass/fail check — that is the whole opt-in surface.
+
+# ── 1. The plain HTTP check: status plus a body assertion ────────────────────
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata: {name: catalogue, namespace: shop, labels: {tier: demo}}
+spec:
+  url: http://catalogue.shop.svc:8080/
+  interval: 10
+  expectedStatus: 200
+  containsText: "items"
+  outputs: [{type: prometheus}, {type: stdout}]
+  intelligence:
+    policyRef: {name: demo-triage, namespace: pulse-system}
+---
+# ── 2. Two services that depend on the catalogue ─────────────────────────────
+# Breaking the catalogue breaks all three; correlation collapses that into one
+# incident with the catalogue named as the root cause.
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata: {name: checkout, namespace: shop, labels: {tier: demo}}
+spec:
+  url: http://checkout.shop.svc:8080/
+  interval: 10
+  expectedStatus: 200
+  intelligence:
+    policyRef: {name: demo-triage, namespace: pulse-system}
+---
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata: {name: search, namespace: shop, labels: {tier: demo}}
+spec:
+  url: http://search.shop.svc:8080/
+  interval: 10
+  expectedStatus: 200
+  intelligence:
+    policyRef: {name: demo-triage, namespace: pulse-system}
+---
+# ── 3. A check that expects something other than 200 ─────────────────────────
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata: {name: no-content, namespace: shop, labels: {tier: demo}}
+spec:
+  url: http://catalogue.shop.svc:8080/health/no-content
+  interval: 10
+  expectedStatus: 204
+  intelligence:
+    policyRef: {name: demo-triage, namespace: pulse-system}
+---
+# ── 4. A scripted multi-step journey ─────────────────────────────────────────
+# The runner keeps one HTTP client and cookie jar across the steps, so a real
+# session flows from one to the next.
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata: {name: login-journey, namespace: shop, labels: {tier: demo}}
+spec:
+  url: http://catalogue.shop.svc:8080/login
+  interval: 15
+  expectedStatus: 200
+  journey:
+    - name: open-login
+      url: http://catalogue.shop.svc:8080/login
+      method: GET
+      expectedStatus: 200
+      containsText: "Sign in"
+    - name: read-session
+      url: http://catalogue.shop.svc:8080/session
+      method: GET
+      expectedStatus: 200
+      containsText: "authenticated"
+  intelligence:
+    policyRef: {name: demo-triage, namespace: pulse-system}
+---
+# ── 5. An MCP server: initialize, notifications/initialized, tools/list ──────
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata: {name: mcp-tools, namespace: shop, labels: {tier: demo}}
+spec:
+  url: http://mcp.shop.svc:8080/mcp
+  interval: 15
+  expectedStatus: 200
+  mcp:
+    protocolVersion: "2025-11-25"
+    requireToolsCapability: true
+    minToolCount: 1
+    requiredTools: ["health.check"]
+  intelligence:
+    policyRef: {name: demo-triage, namespace: pulse-system}
+---
+# ── 6. gRPC, over the standard grpc.health.v1 protocol ───────────────────────
+apiVersion: canary.iambarton.com/v1alpha1
+kind: GrpcCanary
+metadata: {name: orders, namespace: shop, labels: {tier: demo}}
+spec:
+  url: orders-grpc.shop.svc:50051
+  service: shop.Orders
+  interval: 10
+  outputs: [{type: prometheus}]
+  intelligence:
+    policyRef: {name: demo-triage, namespace: pulse-system}
+---
+# ── 7. Similarity-only correlation pair ─────────────────────────────────────
+# These two definitions deliberately have no topology edge. Their identical
+# assertion failures prove the MiniLM similarity merge path independently.
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata: {name: similar-a, namespace: shop, labels: {tier: demo}}
+spec:
+  url: http://unrelated.shop.svc:8080/similar
+  interval: 10
+  expectedStatus: 200
+  containsText: "shared-ready"
+  intelligence:
+    policyRef: {name: demo-triage, namespace: pulse-system}
+---
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata: {name: similar-b, namespace: shop, labels: {tier: demo}}
+spec:
+  url: http://unrelated.shop.svc:8080/similar
+  interval: 10
+  expectedStatus: 200
+  containsText: "shared-ready"
+  intelligence:
+    policyRef: {name: demo-triage, namespace: pulse-system}
+---
+# ── 8. The negative control ──────────────────────────────────────────────────
+# The outage scenario changes its response marker independently while the
+# catalogue returns 503. It shares neither failure text nor a declared
+# dependency, so it must stay a SEPARATE incident — that property is what
+# stops the whole feature degrading into "alert when several things are red".
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata: {name: unrelated, namespace: shop, labels: {tier: demo}}
+spec:
+  url: http://unrelated.shop.svc:8080/
+  interval: 10
+  expectedStatus: 200
+  containsText: "healthy-control"
+  intelligence:
+    policyRef: {name: demo-triage, namespace: pulse-system}

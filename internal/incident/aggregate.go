@@ -34,6 +34,7 @@ type Aggregator struct {
 	// context a language model needs to tell "just broke" from "flapping all
 	// morning". It is bounded per probe so a long outage cannot grow it.
 	history      map[string][]string
+	historySeen  map[string]time.Time
 	historyDepth int
 }
 
@@ -54,6 +55,7 @@ func NewAggregator(timeout time.Duration) *Aggregator {
 		timeout:      timeout,
 		now:          time.Now,
 		history:      map[string][]string{},
+		historySeen:  map[string]time.Time{},
 		historyDepth: 32,
 	}
 }
@@ -79,6 +81,7 @@ func (a *Aggregator) Record(batch ResultBatch) {
 
 	previous := a.shards[shard].results
 	a.shards[shard] = shardState{results: results, reported: a.now()}
+	a.pruneHistoryLocked()
 
 	// Record a history entry only when a probe's message actually changes, so
 	// the trail reads as a sequence of events rather than the same line
@@ -104,6 +107,26 @@ func (a *Aggregator) appendHistoryLocked(probe string, result proberunner.ProbeR
 		trail = trail[len(trail)-a.historyDepth:]
 	}
 	a.history[probe] = trail
+	a.historySeen[probe] = a.now()
+}
+
+func (a *Aggregator) pruneHistoryLocked() {
+	cutoff := a.now().Add(-a.timeout)
+	active := map[string]struct{}{}
+	for _, state := range a.shards {
+		if state.reported.Before(cutoff) {
+			continue
+		}
+		for probe := range state.results {
+			active[probe] = struct{}{}
+		}
+	}
+	for probe, seen := range a.historySeen {
+		if _, found := active[probe]; !found && seen.Before(cutoff) {
+			delete(a.history, probe)
+			delete(a.historySeen, probe)
+		}
+	}
 }
 
 // History returns the most recent check messages for a probe, oldest first.
@@ -138,6 +161,7 @@ func (a *Aggregator) Results() []proberunner.ProbeResult {
 			continue
 		}
 		for _, result := range state.results {
+			result.LiveAgeSeconds = max(0, a.now().Sub(result.LastCheckTime).Seconds())
 			merged = append(merged, result)
 		}
 	}

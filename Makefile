@@ -219,11 +219,173 @@ docker-buildx-proberunner: ## Build and push probe runner image for cross-platfo
 	- $(CONTAINER_TOOL) buildx rm pulse-builder
 	rm Dockerfile.proberunner.cross
 
+##@ Demo
+
+# A self-contained quick start on kind: cluster, images, operator, a target for
+# every canary type, and scripted failures. See docs/quick-start.html.
+# Deliberately not KIND_CLUSTER — that name is already taken by the e2e suite
+# above, and `?=` there would silently win.
+DEMO_CLUSTER ?= pulse-demo
+DEMO_CONTEXT ?= kind-$(DEMO_CLUSTER)
+DEMO_TAG ?= demo
+CANARY ?= catalogue
+VALIDATION ?=
+DEMO_KUBECTL = $(KUBECTL) --context $(DEMO_CONTEXT)
+
+.PHONY: demo-up
+demo-up: ## Build everything and bring the whole demo up on kind, in lifecycle order.
+	@$(MAKE) demo-cluster
+	@$(MAKE) demo-images
+	@$(MAKE) demo-install
+	@$(MAKE) demo-deploy
+	@$(MAKE) demo-workloads
+	@echo
+	@echo "Pulse demo is up. Try:"
+	@echo "  make demo-tour                   # narrated end-to-end walkthrough"
+	@echo "  make demo-explain                # architecture, policy, live results, topology"
+	@echo "  make demo-lab                    # validation experiments you can change"
+
+.PHONY: demo-cluster
+demo-cluster: ## Create the kind cluster (no-op if it already exists).
+	@$(KIND) get clusters 2>/dev/null | grep -qx "$(DEMO_CLUSTER)" \
+		|| $(KIND) create cluster --name $(DEMO_CLUSTER) --config hack/demo/kind.yaml
+	$(DEMO_KUBECTL) cluster-info >/dev/null
+
+.PHONY: demo-images
+demo-images: fetch-models ## Build the operator and deterministic target images and load them into kind.
+	@$(KIND) get clusters 2>/dev/null | grep -qx "$(DEMO_CLUSTER)" \
+		|| { echo "Demo cluster $(DEMO_CLUSTER) does not exist; run 'make demo-cluster' first" >&2; exit 1; }
+	$(CONTAINER_TOOL) build -f Dockerfile               -t pulse-controller:$(DEMO_TAG) .
+	$(CONTAINER_TOOL) build -f Dockerfile.proberunner   -t pulse-probe-runner:$(DEMO_TAG) .
+	$(CONTAINER_TOOL) build -f Dockerfile.incidentengine -t pulse-incident-engine:$(DEMO_TAG) .
+	$(CONTAINER_TOOL) build -f Dockerfile.demo-target -t pulse-demo-target:$(DEMO_TAG) .
+	@for image in pulse-controller pulse-probe-runner pulse-incident-engine pulse-demo-target; do \
+		echo "loading $$image:$(DEMO_TAG)"; \
+		if [ "$(CONTAINER_TOOL)" = "podman" ]; then \
+			$(CONTAINER_TOOL) save --format docker-archive -o /tmp/$$image.tar localhost/$$image:$(DEMO_TAG) >/dev/null 2>&1 \
+				|| $(CONTAINER_TOOL) save --format docker-archive -o /tmp/$$image.tar $$image:$(DEMO_TAG); \
+			$(KIND) load image-archive /tmp/$$image.tar --name $(DEMO_CLUSTER); \
+			rm -f /tmp/$$image.tar; \
+		else \
+			$(KIND) load docker-image $$image:$(DEMO_TAG) --name $(DEMO_CLUSTER); \
+		fi; \
+	done
+
+.PHONY: demo-install
+demo-install: manifests kustomize ## Install the three CRDs.
+	$(KUSTOMIZE) build config/crd | $(DEMO_KUBECTL) apply -f -
+
+.PHONY: demo-deploy
+demo-deploy: ## Deploy the operator, pointed at the demo images.
+	@$(MAKE) deploy \
+		KUBECTL_ARGS="--context $(DEMO_CONTEXT)" \
+		IMG=$(DEMO_IMAGE_PREFIX)pulse-controller:$(DEMO_TAG) \
+		PROBE_RUNNER_IMAGE=$(DEMO_IMAGE_PREFIX)pulse-probe-runner:$(DEMO_TAG) \
+		INCIDENT_ENGINE_IMAGE=$(DEMO_IMAGE_PREFIX)pulse-incident-engine:$(DEMO_TAG)
+	# Local demo tags are intentionally stable. Force a restart so an existing
+	# kind cluster cannot keep running a previous image with the same tag.
+	$(DEMO_KUBECTL) -n pulse-system rollout restart deploy/pulse-controller-manager
+	$(DEMO_KUBECTL) -n pulse-system rollout status deploy/pulse-controller-manager --timeout=300s
+
+# podman tags images under localhost/; docker does not.
+DEMO_IMAGE_PREFIX = $(if $(filter podman,$(CONTAINER_TOOL)),localhost/,)
+
+.PHONY: demo-workloads
+demo-workloads: ## Deploy the demo targets, the sink, the policy and the canaries.
+	@sed 's|PULSE_DEMO_TARGET_IMAGE|$(DEMO_IMAGE_PREFIX)pulse-demo-target:$(DEMO_TAG)|g' \
+		hack/demo/00-targets.yaml | $(DEMO_KUBECTL) apply -f -
+	$(DEMO_KUBECTL) apply -f hack/demo/05-sink.yaml
+	$(DEMO_KUBECTL) -n shop rollout restart deploy/catalogue deploy/checkout deploy/search deploy/unrelated deploy/mcp deploy/orders-grpc
+	$(DEMO_KUBECTL) -n pulse-demo rollout restart deploy/sink
+	@for deployment in catalogue checkout search unrelated mcp orders-grpc; do \
+		$(DEMO_KUBECTL) -n shop rollout status deploy/$$deployment --timeout=300s; \
+	done
+	$(DEMO_KUBECTL) -n pulse-demo rollout status deploy/sink --timeout=300s
+	$(DEMO_KUBECTL) apply -f hack/demo/10-policy.yaml
+	$(DEMO_KUBECTL) apply -f hack/demo/20-canaries.yaml
+	@until $(DEMO_KUBECTL) -n pulse-system get statefulset/pulse-probe-runner deployment/pulse-incident-engine >/dev/null 2>&1; do sleep 2; done
+	$(DEMO_KUBECTL) -n pulse-system rollout restart statefulset/pulse-probe-runner deployment/pulse-incident-engine
+	$(DEMO_KUBECTL) -n pulse-system rollout status statefulset/pulse-probe-runner --timeout=300s
+	$(DEMO_KUBECTL) -n pulse-system rollout status deployment/pulse-incident-engine --timeout=300s
+	@KUBECTL="$(DEMO_KUBECTL)" hack/demo/scenarios.sh ready
+
+.PHONY: demo-status demo-test
+demo-status: ## Join each declared validation to its live probe and model result.
+	@KUBECTL="$(DEMO_KUBECTL)" python3 hack/demo/demo_inspect.py status
+demo-test: ## Run fixture tests for demo evidence parsing and freshness rendering.
+	python3 -m unittest hack/demo/test_demo_tools.py
+
+.PHONY: demo-explain demo-inspect demo-incidents demo-topology demo-lab demo-validate
+demo-explain: ## Explain the architecture, resolved models, live results, and topology.
+	@KUBECTL="$(DEMO_KUBECTL)" python3 hack/demo/demo_inspect.py overview
+demo-inspect: ## Show one canary's desired spec and observed status (CANARY=catalogue).
+	@KUBECTL="$(DEMO_KUBECTL)" python3 hack/demo/demo_inspect.py canary "$(CANARY)"
+demo-incidents: ## Show the engine's live incident membership and root-cause evidence.
+	@KUBECTL="$(DEMO_KUBECTL)" python3 hack/demo/demo_inspect.py incidents
+demo-topology: ## Show active declared edges separately from learned proposals.
+	@KUBECTL="$(DEMO_KUBECTL)" python3 hack/demo/demo_inspect.py topology
+demo-lab: ## List validations, or inspect one with VALIDATION=status.
+	@KUBECTL="$(DEMO_KUBECTL)" hack/demo/lab.sh "$(if $(VALIDATION),$(VALIDATION),list)" show
+demo-validate: ## Run one narrated validation experiment (VALIDATION=status).
+	@if [ -z "$(VALIDATION)" ]; then echo "Set VALIDATION. Run 'make demo-lab' for the list."; exit 2; fi
+	@KUBECTL="$(DEMO_KUBECTL)" hack/demo/lab.sh "$(VALIDATION)" run
+
+.PHONY: demo-show
+demo-show: ## Print what the llm, slack and observability actions actually sent.
+	@$(DEMO_KUBECTL) -n pulse-demo logs deploy/sink --tail=200 2>/dev/null \
+		| python3 hack/demo/show-actions.py
+
+.PHONY: demo-events
+demo-events: ## Show the Kubernetes Events Pulse recorded on the canaries.
+	@$(DEMO_KUBECTL) -n shop get events --sort-by=.lastTimestamp \
+		| grep -Ei 'BodyDrift|LatencyShift|Incident|Suppressed' || echo "no Pulse events yet"
+
+.PHONY: demo-green-deploy demo-latency demo-http-contract demo-content demo-journey demo-mcp demo-grpc demo-outage demo-similarity demo-novelty demo-restore demo-reset-definitions demo-scenarios demo-tour demo-tour-paced
+demo-green-deploy: ## A green build that keeps returning 200 while the payload changes.
+	@KUBECTL="$(DEMO_KUBECTL)" hack/demo/scenarios.sh green-deploy
+demo-latency: ## A passing endpoint that becomes materially slower.
+	@KUBECTL="$(DEMO_KUBECTL)" hack/demo/scenarios.sh latency
+demo-http-contract: ## Break the canary that expects HTTP 204.
+	@KUBECTL="$(DEMO_KUBECTL)" hack/demo/scenarios.sh no-content
+demo-content: ## Keep HTTP 200 but remove a required containsText marker.
+	@KUBECTL="$(DEMO_KUBECTL)" hack/demo/scenarios.sh content
+demo-journey: ## Break the second step of the login journey.
+	@KUBECTL="$(DEMO_KUBECTL)" hack/demo/scenarios.sh journey
+demo-mcp: ## Remove a required MCP tool.
+	@KUBECTL="$(DEMO_KUBECTL)" hack/demo/scenarios.sh mcp
+demo-grpc: ## Make gRPC health report NOT_SERVING.
+	@KUBECTL="$(DEMO_KUBECTL)" hack/demo/scenarios.sh grpc
+demo-outage: ## Break a shared dependency and watch it become one incident.
+	@KUBECTL="$(DEMO_KUBECTL)" hack/demo/scenarios.sh outage
+demo-similarity: ## Merge identical failures with model evidence and no topology edge.
+	@KUBECTL="$(DEMO_KUBECTL)" hack/demo/scenarios.sh similarity
+demo-novelty: ## Repeat a known failure to show it is not treated as new.
+	@KUBECTL="$(DEMO_KUBECTL)" hack/demo/scenarios.sh novelty
+demo-restore: ## Put everything back to healthy.
+	@KUBECTL="$(DEMO_KUBECTL)" hack/demo/scenarios.sh restore
+demo-reset-definitions: ## Recreate demo-owned policy/canaries, removing lab customizations.
+	$(DEMO_KUBECTL) delete --ignore-not-found -f hack/demo/20-canaries.yaml
+	$(DEMO_KUBECTL) delete --ignore-not-found -f hack/demo/10-policy.yaml
+	$(DEMO_KUBECTL) apply -f hack/demo/10-policy.yaml
+	$(DEMO_KUBECTL) apply -f hack/demo/20-canaries.yaml
+demo-scenarios: ## Run every scenario in order.
+	@KUBECTL="$(DEMO_KUBECTL)" hack/demo/scenarios.sh all
+demo-tour: demo-scenarios ## Narrated full tour: architecture, validations, evidence, incidents, actions, recovery.
+demo-tour-paced: ## Interactive tour that pauses with each failure live for investigation.
+	@DEMO_PAUSE=1 KUBECTL="$(DEMO_KUBECTL)" hack/demo/scenarios.sh all
+
+.PHONY: demo-down
+demo-down: ## Delete the kind cluster.
+	$(KIND) delete cluster --name $(DEMO_CLUSTER)
+
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
-	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
-	"$(KUSTOMIZE)" build config/default > dist/install.yaml
+	@"$(KUSTOMIZE)" build config/default \
+		| sed -e 's|image: controller:latest|image: $(IMG)|' \
+		       -e 's|value: probe-runner:latest|value: $(PROBE_RUNNER_IMAGE)|' \
+		       -e 's|value: incident-engine:latest|value: $(INCIDENT_ENGINE_IMAGE)|' \
+		> dist/install.yaml
 
 ##@ Deployment
 
@@ -243,19 +405,19 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
-	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -
-	"$(KUBECTL)" -n pulse-system set env deployment/pulse-controller-manager \
-		PULSE_PROBE_RUNNER_IMAGE="$${PULSE_PROBE_RUNNER_IMAGE:-$(PROBE_RUNNER_IMAGE)}" \
-		PULSE_INCIDENT_ENGINE_IMAGE="$${PULSE_INCIDENT_ENGINE_IMAGE:-$(INCIDENT_ENGINE_IMAGE)}"
+	@"$(KUSTOMIZE)" build config/default \
+		| sed -e 's|image: controller:latest|image: $(IMG)|' \
+		       -e 's|value: probe-runner:latest|value: $(PROBE_RUNNER_IMAGE)|' \
+		       -e 's|value: incident-engine:latest|value: $(INCIDENT_ENGINE_IMAGE)|' \
+		| "$(KUBECTL)" $(KUBECTL_ARGS) apply -f -
 	@pull_secrets="$${PULSE_PROBE_RUNNER_IMAGE_PULL_SECRETS:-$(PROBE_RUNNER_IMAGE_PULL_SECRETS)}"; \
 	if [ -n "$$pull_secrets" ]; then \
-		"$(KUBECTL)" -n pulse-system set env deployment/pulse-controller-manager \
+		"$(KUBECTL)" $(KUBECTL_ARGS) -n pulse-system set env deployment/pulse-controller-manager \
 			PULSE_PROBE_RUNNER_IMAGE_PULL_SECRETS="$$pull_secrets"; \
 	fi
 	@results_url="$${PULSE_PROBE_RUNNER_RESULTS_URL:-$(PROBE_RUNNER_RESULTS_URL)}"; \
 	if [ -n "$$results_url" ]; then \
-		"$(KUBECTL)" -n pulse-system set env deployment/pulse-controller-manager \
+		"$(KUBECTL)" $(KUBECTL_ARGS) -n pulse-system set env deployment/pulse-controller-manager \
 			PULSE_PROBE_RUNNER_RESULTS_URL="$$results_url"; \
 	fi
 
@@ -272,6 +434,7 @@ $(LOCALBIN):
 
 ## Tool Binaries
 KUBECTL ?= kubectl
+KUBECTL_ARGS ?=
 KIND ?= kind
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen

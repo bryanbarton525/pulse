@@ -1,0 +1,7 @@
+# Single-node cluster for the Pulse quick start. Nothing here is Pulse-specific
+# the demo needs no ingress, storage, or extra ports. The Makefile supplies the
+# cluster name so DEMO_CLUSTER overrides work.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane

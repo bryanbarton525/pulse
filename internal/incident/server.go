@@ -1,9 +1,11 @@
 package incident
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
@@ -14,6 +16,11 @@ import (
 
 // maxRequestBytes bounds a single push from a probe runner.
 const maxRequestBytes = 16 << 20
+
+const (
+	maxObservationBatch = 2048
+	maxResultBatch      = 10000
+)
 
 // NewServeMux builds the incident engine's HTTP surface.
 //
@@ -31,8 +38,13 @@ func NewServeMux(
 	aggregator *Aggregator,
 	logger logr.Logger,
 	gatherer prometheus.Gatherer,
+	internalToken ...func() string,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
+	token := func() string { return "" }
+	if len(internalToken) > 0 && internalToken[0] != nil {
+		token = internalToken[0]
+	}
 
 	mux.Handle("GET /metrics", promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{}))
 
@@ -42,11 +54,19 @@ func NewServeMux(
 	})
 
 	mux.HandleFunc("POST /observations", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, token()) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		var batch observation.Batch
 		if !decode(w, r, logger, &batch) {
 			return
 		}
 
+		if len(batch.Observations) > maxObservationBatch {
+			http.Error(w, "observation batch too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		for _, signal := range batch.Observations {
 			engine.Ingest(r.Context(), signal)
 		}
@@ -55,11 +75,20 @@ func NewServeMux(
 	})
 
 	mux.HandleFunc("POST /results", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, token()) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		var batch ResultBatch
 		if !decode(w, r, logger, &batch) {
 			return
 		}
 
+		if len(batch.Results) > maxResultBatch {
+			http.Error(w, "result batch too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		engine.ReconcileResults(batch.Results)
 		aggregator.Record(batch)
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -83,6 +112,19 @@ func NewServeMux(
 	})
 
 	return mux
+}
+
+func authorized(request *http.Request, token string) bool {
+	if token == "" {
+		// Preserve local-development and unit-test behavior when no shared token
+		// was configured. Production reconciliation always creates one.
+		return true
+	}
+	provided := strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer ")
+	if len(provided) != len(token) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(provided), []byte(token)) == 1
 }
 
 func decode(w http.ResponseWriter, r *http.Request, logger logr.Logger, target any) bool {

@@ -1,0 +1,70 @@
+# The AnomalyPolicy every demo canary opts into.
+#
+# Demo-specific overrides keep the tour short and deterministic. Body-drift
+# warmup is 5 instead of 20; latency warmup is 8 instead of 30; novelty uses a
+# strict 0.999 replay match and a 1-second settling period instead of 0.80/300;
+# throttling uses no cooldown and a high hourly cap instead of 900/4. The drift,
+# latency, and correlation thresholds and consecutive-breach counts retain
+# their API defaults.
+apiVersion: canary.iambarton.com/v1alpha1
+kind: AnomalyPolicy
+metadata: {name: demo-triage, namespace: pulse-system}
+spec:
+  triggers:
+    bodyDrift:          {enabled: true, threshold: "0.15", warmupChecks: 5, consecutiveBreaches: 2}
+    latencyShift:       {enabled: true, zScoreThreshold: "3.0", warmupChecks: 8, consecutiveBreaches: 3}
+    failureCorrelation: {enabled: true, windowSeconds: 120, similarityThreshold: "0.85"}
+    # Keep first-time protocol failures distinct in this compact showcase;
+    # exact scenario replays still score essentially 1.0 and join the cluster.
+    failureNovelty:     {enabled: true, clusterThreshold: "0.999", settlingPeriodSeconds: 1}
+
+  topology:
+    # checkout and search both read the catalogue, so when the catalogue breaks
+    # it is the root cause and they are downstream.
+    dependsOn:
+      - {canary: shop/checkout, upstream: [shop/catalogue]}
+      - {canary: shop/search,   upstream: [shop/catalogue]}
+    inferDependencies: true
+    inferMinObservations: 3
+    inferMinConfidence: "0.7"
+
+  incidents:
+    notifyOnDownstream: false
+
+  # Actions fire in order for the ROOT CAUSE's policy. `local` needs no
+  # credentials at all; the rest point at the demo sink, which records what it
+  # receives so you can read the payloads back with kubectl logs.
+  actions:
+    - {name: local, type: metric}
+    - name: investigate
+      type: llm
+      llm:
+        endpoint: http://sink.pulse-demo.svc:8080/v1/chat/completions
+        model: demo-model
+        apiKeySecretRef: {name: demo-sink-auth, key: llm-token}
+        contextChecks: 20
+        timeoutSeconds: 30
+    - name: notify
+      type: slack
+      slack:
+        webhookSecretRef: {name: demo-sink-auth, key: slack-webhook}
+        includeInvestigation: true
+    - name: ship-logs
+      type: observability
+      observability:
+        provider: datadog
+        endpoint: http://sink.pulse-demo.svc:8080
+        credentialSecretRef: {name: demo-sink-auth, key: dd-api-key}
+        tags: {env: demo, team: sre}
+
+  # Keep the showcase replayable: deduplication prevents duplicate actions
+  # within an incident, while novelty gates repeat LLM investigations.
+  throttle: {cooldownSeconds: 0, maxPerHour: 50}
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: demo-sink-auth, namespace: pulse-system}
+stringData:
+  llm-token: demo-llm-token
+  slack-webhook: http://sink.pulse-demo.svc:8080/slack/webhook
+  dd-api-key: demo-datadog-key

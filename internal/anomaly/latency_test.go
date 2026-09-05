@@ -1,6 +1,7 @@
 package anomaly
 
 import (
+	"math"
 	"math/rand"
 	"testing"
 	"time"
@@ -70,6 +71,27 @@ func TestLatencyDetectsSustainedSlowdown(t *testing.T) {
 
 	if !shifted {
 		t.Fatal("Shifted = false after a sustained 9x slowdown")
+	}
+}
+
+func TestLatencyDetectsSlowdownAfterConstantBaseline(t *testing.T) {
+	t.Parallel()
+
+	detector := NewLatencyDetector()
+	config := defaultLatencyConfig()
+	for range config.WarmupChecks {
+		detector.Observe("ns/constant", 100*time.Millisecond, config)
+	}
+
+	var result LatencyResult
+	for range config.ConsecutiveBreaches {
+		result = detector.Observe("ns/constant", 900*time.Millisecond, config)
+	}
+	if !result.Shifted {
+		t.Fatalf("Shifted = false after constant baseline slowdown (z=%v)", result.ZScore)
+	}
+	if math.IsInf(result.ZScore, 0) || math.IsNaN(result.ZScore) {
+		t.Fatalf("ZScore = %v, want finite JSON-safe value", result.ZScore)
 	}
 }
 

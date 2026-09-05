@@ -34,13 +34,15 @@ The generated probe key is `namespace/name`, which gives the status syncer a sta
 
 ## Managed Resources
 
-The reconciler owns three resources in the operator namespace:
+The reconciler owns shared resources in the operator namespace:
 
 - `ConfigMap/pulse-probe-config`
-- `Deployment/pulse-probe-runner`
+- `StatefulSet/pulse-probe-runner`
 - `Service/pulse-probe-runner`
+- `Service/pulse-probe-runner-headless`
+- optional `Deployment/pulse-incident-engine` and `Service/pulse-incident-engine`
 
-`controllerutil.CreateOrUpdate` is used for all three so reconciliation stays declarative and repeatable.
+`controllerutil.CreateOrUpdate` is used so reconciliation stays declarative and repeatable.
 
 ## What Reconcile Does Not Do
 
@@ -60,7 +62,7 @@ If listing canaries or marshaling probe config fails, reconcile exits with an er
 
 ### Runner infrastructure drift
 
-If the Deployment or Service is deleted or mutated, the next canary event causes the controller to restore the expected shape.
+If the StatefulSet, Deployment, or Service is deleted or mutated, the next relevant event causes the controller to restore the expected shape.
 
 ### No canaries present
 
@@ -68,13 +70,13 @@ The controller still reconciles the shared infrastructure. This keeps the runner
 
 ## Current Constraints
 
-- The controller assumes one shared runner Deployment.
+- The controller assumes one shared runner StatefulSet whose replicas use stable-hash sharding.
 - Config delivery depends on ConfigMap size limits.
 - The controller creates infrastructure in one namespace only.
 - Cross-namespace owner references are not used.
 
 ## Likely Next Design Steps
 
-- Shard runner workloads when probe count becomes large
+- Add automated capacity guidance for choosing an explicit runner shard count
 - Add readiness semantics around runner availability before status sync begins reporting failures
 - Introduce stronger rollout controls for runner image versioning and configuration changes

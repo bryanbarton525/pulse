@@ -94,7 +94,9 @@ const (
 // Omit it entirely to use the models baked into the Pulse images.
 type AnomalyModelConfig struct {
 	// Hot configures the embedder used on the body-drift path, which runs on
-	// every passing check.
+	// every passing check. This setting is cluster-wide: all runner shards must
+	// produce vectors in the same embedding space. Conflicts are resolved
+	// deterministically by policy name and reported by the operator.
 	// +optional
 	Hot *HotModelConfig `json:"hot,omitempty"`
 
@@ -268,8 +270,9 @@ type BodyDriftTrigger struct {
 	// +optional
 	SampleEvery int `json:"sampleEvery,omitempty"`
 
-	// Redact is a list of regular expressions stripped from the body BEFORE it
-	// is embedded or logged. Use it for anything the model should never see.
+	// Redact is retained for backwards compatibility. Prefer spec.privacy.redact,
+	// which also protects failure messages and external action prompts.
+	// Deprecated: use AnomalyPolicySpec.Privacy.Redact.
 	// +optional
 	Redact []string `json:"redact,omitempty"`
 }
@@ -483,7 +486,7 @@ type SlackAction struct {
 	IncludeInvestigation bool `json:"includeInvestigation,omitempty"`
 
 	// Template is an optional Go template over the incident. Empty uses the
-	// built-in Block Kit message.
+	// built-in plain-Markdown message supported by webhooks and chat.postMessage.
 	// +optional
 	Template string `json:"template,omitempty"`
 }
@@ -539,6 +542,15 @@ type AnomalyThrottle struct {
 	MaxPerHour int `json:"maxPerHour,omitempty"`
 }
 
+// AnomalyPrivacy controls what text is allowed to reach embedding models,
+// incident history, and external actions.
+type AnomalyPrivacy struct {
+	// Redact contains regular expressions replaced before any response or
+	// failure text leaves the probe runner. Built-in masking remains enabled.
+	// +optional
+	Redact []string `json:"redact,omitempty"`
+}
+
 // ── Policy ────────────────────────────────────────────────────────────────
 
 // AnomalyPolicySpec defines the desired state of AnomalyPolicy.
@@ -549,6 +561,11 @@ type AnomalyPolicySpec struct {
 	// Model selects the embedding models. Omit for the baked-in defaults.
 	// +optional
 	Model *AnomalyModelConfig `json:"model,omitempty"`
+
+	// Privacy applies redaction consistently to body drift, failure
+	// correlation, novelty, history, and language-model prompts.
+	// +optional
+	Privacy *AnomalyPrivacy `json:"privacy,omitempty"`
 
 	// Triggers selects which evaluations run.
 	// +optional
@@ -603,6 +620,16 @@ type AnomalyPolicyStatus struct {
 	// ReferencedBy counts canaries currently using this policy.
 	// +optional
 	ReferencedBy int `json:"referencedBy,omitempty"`
+
+	// ResolvedHotModel is the cluster-wide body-drift model selected from all
+	// referenced policies.
+	// +optional
+	ResolvedHotModel string `json:"resolvedHotModel,omitempty"`
+
+	// ResolvedColdModel is the cluster-wide correlation/novelty model selected
+	// from all referenced policies.
+	// +optional
+	ResolvedColdModel string `json:"resolvedColdModel,omitempty"`
 
 	// InferredDependencies are proposed edges awaiting human review. They do not
 	// affect correlation until promoted into spec.topology.dependsOn.
@@ -714,6 +741,11 @@ type CanaryIntelligenceStatus struct {
 	// +kubebuilder:validation:Enum=bodyDrift;latencyShift;failureCorrelation;failureNovelty
 	// +optional
 	Trigger string `json:"trigger,omitempty"`
+
+	// Novel reports whether the failure-correlation shape was new to the active
+	// model. Nil for triggers where novelty does not apply.
+	// +optional
+	Novel *bool `json:"novel,omitempty"`
 
 	// Score is the trigger's score, formatted as a decimal string.
 	// +optional

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	ort "github.com/yalue/onnxruntime_go"
 )
@@ -45,7 +46,7 @@ type ONNXEmbedder struct {
 	mu      sync.Mutex
 	session *ort.DynamicAdvancedSession
 
-	dimensions int
+	dimensions atomic.Int64
 }
 
 // LoadONNX opens an ONNX sentence transformer and its vocabulary.
@@ -82,7 +83,7 @@ func ONNXCompiledIn() bool { return true }
 func (o *ONNXEmbedder) Space() string { return SpaceMiniLM }
 
 // Dimensions implements Embedder.
-func (o *ONNXEmbedder) Dimensions() int { return o.dimensions }
+func (o *ONNXEmbedder) Dimensions() int { return int(o.dimensions.Load()) }
 
 // Close implements Embedder.
 func (o *ONNXEmbedder) Close() error {
@@ -168,7 +169,7 @@ func (o *ONNXEmbedder) Embed(ctx context.Context, texts []string) ([]Vector, err
 		return nil, fmt.Errorf("ONNX model returned rank %d output, want 3", len(outputShape))
 	}
 	dimensions := int(outputShape[2])
-	o.dimensions = dimensions
+	o.dimensions.Store(int64(dimensions))
 
 	data := hidden.GetData()
 	vectors := make([]Vector, batch)

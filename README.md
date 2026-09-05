@@ -8,9 +8,19 @@ Pulse is a Kubernetes operator that lets developers define canary health checks 
 
 Pulse supports simple single-request checks, scripted multi-step HTTP journeys for login, session, and checkout-style flows, and MCP tool-availability validation over HTTP.
 
-The repository already includes a fuller design set in `docs/`. Start with the architecture summary, then drill into reconciliation, scaling, operations, and validation details.
+For a self-contained Kind cluster with every canary type, narrated failures, live model evidence, action payloads, and hands-on validation labs, start with the [runnable quick start](docs/quick-start.html). The rest of `docs/` covers production architecture and operations.
 
 ## Quick Start
+
+The complete local tour is:
+
+```bash
+make demo-up
+make demo-tour-paced
+make demo-lab
+```
+
+Every demo command pins Kubernetes operations to `kind-pulse-demo` by default; set `DEMO_CLUSTER=name` to use another dedicated Kind cluster. The shorter local-controller path below uses your current kubeconfig and needs an explicit, laptop-reachable results URL for status syncing.
 
 ```bash
 # Install CRDs

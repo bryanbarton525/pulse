@@ -1,5 +1,4 @@
 ---
----
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -196,6 +195,11 @@ spec:
                   lastSignalTime:
                     format: date-time
                     type: string
+                  novel:
+                    description: |-
+                      Novel reports whether the failure-correlation shape was new to the active
+                      model. Nil for triggers where novelty does not apply.
+                    type: boolean
                   policy:
                     description: Policy is the AnomalyPolicy that evaluated this canary
                       ("namespace/name").

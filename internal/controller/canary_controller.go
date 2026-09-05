@@ -2,21 +2,27 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"maps"
+	"sort"
 
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	canaryv1alpha1 "github.com/bryanbarton525/pulse/api/v1alpha1"
 	"github.com/bryanbarton525/pulse/internal/proberunner"
@@ -132,6 +138,12 @@ func (r *CanaryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	authStore := proberunner.AuthStore{Values: map[string]string{}}
 	r.populateProbeAuth(ctx, httpCanaryList.Items, &config, &authStore)
 	r.populateProbeIntelligence(ctx, httpCanaryList.Items, grpcCanaryList.Items, policyList.Items, &config, &authStore)
+	sort.Slice(config.Probes, func(i, j int) bool { return config.Probes[i].Name < config.Probes[j].Name })
+	r.syncPolicyModelStatus(ctx, policyList.Items, config.Probes)
+	if err := r.populateInternalAuthToken(ctx, &authStore); err != nil {
+		logger.Error(err, "Failed to prepare internal authentication")
+		return ctrl.Result{}, err
+	}
 
 	configYAML, err := yaml.Marshal(config)
 	if err != nil {
@@ -424,6 +436,39 @@ func probeCredentialID(namespace, name, suffix string) string {
 	return fmt.Sprintf("%s__%s__%s", namespace, name, suffix)
 }
 
+func (r *CanaryReconciler) populateInternalAuthToken(
+	ctx context.Context,
+	authStore *proberunner.AuthStore,
+) error {
+	if authStore.Values == nil {
+		authStore.Values = map[string]string{}
+	}
+
+	var secret corev1.Secret
+	err := r.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: ProbeAuthName}, &secret)
+	if err == nil {
+		var existing proberunner.AuthStore
+		if payload := secret.Data[ProbeAuthFile]; len(payload) > 0 {
+			if unmarshalErr := yaml.Unmarshal(payload, &existing); unmarshalErr != nil {
+				return fmt.Errorf("decoding existing internal auth store: %w", unmarshalErr)
+			}
+			if token := existing.Values[proberunner.InternalAuthTokenKey]; token != "" {
+				authStore.Values[proberunner.InternalAuthTokenKey] = token
+				return nil
+			}
+		}
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	random := make([]byte, 32)
+	if _, err := rand.Read(random); err != nil {
+		return fmt.Errorf("generating internal auth token: %w", err)
+	}
+	authStore.Values[proberunner.InternalAuthTokenKey] = base64.RawURLEncoding.EncodeToString(random)
+	return nil
+}
+
 func (r *CanaryReconciler) ensureAuthSecret(ctx context.Context, authYAML []byte) error {
 	logger := log.FromContext(ctx)
 
@@ -538,6 +583,7 @@ func (r *CanaryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					return []ctrl.Request{triggerKey}
 				},
 			),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
 		).
 		Watches(&canaryv1alpha1.GrpcCanary{},
 			handler.EnqueueRequestsFromMapFunc(
@@ -545,6 +591,7 @@ func (r *CanaryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					return []ctrl.Request{triggerKey}
 				},
 			),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
 		).
 		Watches(&canaryv1alpha1.AnomalyPolicy{},
 			handler.EnqueueRequestsFromMapFunc(
@@ -552,6 +599,7 @@ func (r *CanaryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					return []ctrl.Request{triggerKey}
 				},
 			),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
 		).
 		Watches(&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(

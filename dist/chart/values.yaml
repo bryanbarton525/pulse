@@ -130,3 +130,9 @@ certManager:
 ##
 prometheus:
   enable: false
+
+## Restrict direct access to the probe runner and incident engine. Metrics
+## collectors remain allowed from namespaces labeled `metrics: enabled`.
+##
+networkPolicy:
+  enable: true

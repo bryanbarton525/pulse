@@ -77,11 +77,12 @@ func (l *LatencyDetector) Observe(probe string, duration time.Duration, config L
 		return LatencyResult{Warming: true, Samples: current.samples}
 	}
 
-	deviation := math.Sqrt(current.variance)
-	zScore := 0.0
-	if deviation > 0 {
-		zScore = (seconds - current.mean) / deviation
-	}
+	// A deterministic endpoint can have a zero-variance baseline. Treating its
+	// first slowdown as z=0 would absorb the regression and make a perfectly
+	// stable service less observable than a noisy one. A small relative/absolute
+	// floor keeps the score finite and avoids reacting to timer quantization.
+	deviation := max(math.Sqrt(current.variance), math.Abs(current.mean)*0.05, 0.001)
+	zScore := (seconds - current.mean) / deviation
 
 	if zScore > config.ZScoreThreshold {
 		current.consecutive++

@@ -20,10 +20,12 @@ import (
 // checking because its analysis tier is down is worse than monitoring that
 // misses one correlation.
 type HTTPShipper struct {
-	endpoint string
-	shard    string
-	client   *http.Client
-	logger   logr.Logger
+	endpoint    string
+	shard       string
+	client      *http.Client
+	logger      logr.Logger
+	token       string
+	tokenSource *InternalToken
 
 	queue chan observation.Observation
 	done  chan struct{}
@@ -41,6 +43,10 @@ type ShipperOptions struct {
 	Endpoint string
 	Shard    string
 	Logger   logr.Logger
+	Token    string
+	// TokenSource takes precedence over Token and supports mounted Secret
+	// rotation without restarting either process.
+	TokenSource *InternalToken
 
 	// QueueSize bounds how many observations can be buffered before new ones
 	// are dropped.
@@ -60,12 +66,14 @@ func NewHTTPShipper(options ShipperOptions) *HTTPShipper {
 	}
 
 	shipper := &HTTPShipper{
-		endpoint: options.Endpoint,
-		shard:    options.Shard,
-		client:   &http.Client{Timeout: 10 * time.Second},
-		logger:   options.Logger,
-		queue:    make(chan observation.Observation, options.QueueSize),
-		done:     make(chan struct{}),
+		endpoint:    options.Endpoint,
+		shard:       options.Shard,
+		client:      &http.Client{Timeout: 10 * time.Second},
+		logger:      options.Logger,
+		token:       options.Token,
+		tokenSource: options.TokenSource,
+		queue:       make(chan observation.Observation, options.QueueSize),
+		done:        make(chan struct{}),
 	}
 
 	go shipper.run(options.BatchWindow)
@@ -167,6 +175,13 @@ func (s *HTTPShipper) send(signals []observation.Observation) {
 		return
 	}
 	request.Header.Set("Content-Type", "application/json")
+	token := s.token
+	if s.tokenSource != nil {
+		token = s.tokenSource.Get()
+	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	response, err := s.client.Do(request)
 	if err != nil {
@@ -202,12 +217,14 @@ type ResultBatch struct {
 // discover and poll every replica through a headless Service. Pushing keeps
 // the controller's single-endpoint model intact.
 type ResultPusher struct {
-	endpoint string
-	shard    string
-	runner   *Runner
-	client   *http.Client
-	logger   logr.Logger
-	interval time.Duration
+	endpoint    string
+	shard       string
+	runner      *Runner
+	client      *http.Client
+	logger      logr.Logger
+	interval    time.Duration
+	token       string
+	tokenSource *InternalToken
 }
 
 // NewResultPusher builds a pusher.
@@ -216,12 +233,13 @@ func NewResultPusher(
 	runner *Runner,
 	logger logr.Logger,
 	interval time.Duration,
+	token ...string,
 ) *ResultPusher {
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
 
-	return &ResultPusher{
+	pusher := &ResultPusher{
 		endpoint: endpoint,
 		shard:    shard,
 		runner:   runner,
@@ -229,6 +247,16 @@ func NewResultPusher(
 		logger:   logger,
 		interval: interval,
 	}
+	if len(token) > 0 {
+		pusher.token = token[0]
+	}
+	return pusher
+}
+
+// UseTokenSource makes future pushes read a reloadable mounted Secret value.
+func (p *ResultPusher) UseTokenSource(source *InternalToken) *ResultPusher {
+	p.tokenSource = source
+	return p
 }
 
 // Run pushes results until the context is cancelled.
@@ -263,6 +291,13 @@ func (p *ResultPusher) push(ctx context.Context) {
 		return
 	}
 	request.Header.Set("Content-Type", "application/json")
+	token := p.token
+	if p.tokenSource != nil {
+		token = p.tokenSource.Get()
+	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	response, err := p.client.Do(request)
 	if err != nil {

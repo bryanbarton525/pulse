@@ -52,18 +52,16 @@ Watches(&canaryv1alpha1.HttpCanary{},
 | Config rebuild | Full list + rebuild | O(N) per reconcile |
 | Status polling | Single Runnable | O(1) polls per interval |
 | Status writes | Change detection | O(changed) per interval |
-| Probe execution | Single runner pod | O(N) checks, bounded by runner resources |
+| Probe execution | Stable-hash sharding across runner StatefulSet replicas | O(N/R) checks per replica |
+| Result collection | Aggregate snapshots through the engine, or fan out to every runner ordinal | O(R + N) per poll |
 
 ## Future Scaling Considerations
 
 ### Probe Runner Horizontal Scaling
 
-The probe runner is currently a single-replica Deployment. For thousands of probes:
+The runner is a StatefulSet. Each replica hashes the probe name against the configured replica count and executes only its stable partition. With intelligence enabled, replicas push complete snapshots to the incident engine; without it, the status syncer addresses each ordinal through the headless Service and merges the responses. Changing the replica count reshardes ownership and resets in-memory detector baselines for probes that move.
 
-- Add an HPA based on CPU/memory
-- Partition the probe config across replicas (e.g., consistent hashing by probe name)
-- Each replica reports results for its partition
-- The StatusSyncer polls all replicas (or a results aggregator service)
+Autoscaling is not currently automatic: replica count is explicit because a changing shard count moves ownership and temporarily warms new local baselines. Capacity planning should account for check rate, target latency, model sampling, and the resulting warmup period.
 
 ### ConfigMap Size Limits
 

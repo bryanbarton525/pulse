@@ -356,6 +356,56 @@ func TestApplyOverridesDoesNotMutateSharedPolicy(t *testing.T) {
 	}
 }
 
+func TestFlattenPromotesPolicyPrivacyRedaction(t *testing.T) {
+	t.Parallel()
+
+	reconciler := intelligenceReconciler(t)
+	policy := testPolicy()
+	policy.Spec.Privacy = &canaryv1alpha1.AnomalyPrivacy{Redact: []string{`account=\w+`}}
+	resolver := newIntelligenceResolver(&reconciler, []canaryv1alpha1.AnomalyPolicy{policy})
+	flattened, _, err := resolver.flatten(context.Background(), policy)
+	if err != nil {
+		t.Fatalf("flatten() error = %v", err)
+	}
+	if len(flattened.Redact) != 1 || flattened.Redact[0] != `account=\w+` {
+		t.Fatalf("flattened redact = %v, want policy-level expression", flattened.Redact)
+	}
+}
+
+func TestInternalAuthTokenIsGeneratedAndPreserved(t *testing.T) {
+	t.Parallel()
+
+	reconciler := intelligenceReconciler(t)
+	first := proberunner.AuthStore{Values: map[string]string{}}
+	if err := reconciler.populateInternalAuthToken(context.Background(), &first); err != nil {
+		t.Fatalf("populateInternalAuthToken() error = %v", err)
+	}
+	token := first.Values[proberunner.InternalAuthTokenKey]
+	if len(token) < 40 {
+		t.Fatalf("generated token length = %d, want at least 40", len(token))
+	}
+
+	payload, err := yaml.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: ProbeAuthName, Namespace: "pulse-system"},
+		Data:       map[string][]byte{ProbeAuthFile: payload},
+	}
+	reconciler = CanaryReconciler{
+		Client: fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(secret).Build(),
+		Scheme: testScheme(t), Namespace: "pulse-system",
+	}
+	second := proberunner.AuthStore{Values: map[string]string{}}
+	if err := reconciler.populateInternalAuthToken(context.Background(), &second); err != nil {
+		t.Fatalf("preserving token: %v", err)
+	}
+	if got := second.Values[proberunner.InternalAuthTokenKey]; got != token {
+		t.Fatalf("preserved token = %q, want original token", got)
+	}
+}
+
 func TestFlattenActionsRejectsInvalidConfigurations(t *testing.T) {
 	t.Parallel()
 

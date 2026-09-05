@@ -127,6 +127,9 @@ func (ir *intelligenceResolver) flatten(
 	intelligence := &proberunner.ProbeIntelligence{
 		Policy: fmt.Sprintf("%s/%s", policy.Namespace, policy.Name),
 	}
+	if policy.Spec.Privacy != nil {
+		intelligence.Redact = append([]string(nil), policy.Spec.Privacy.Redact...)
+	}
 
 	model, err := ir.flattenModel(ctx, policy, credentials)
 	if err != nil {
@@ -139,6 +142,11 @@ func (ir *intelligenceResolver) flatten(
 		return nil, nil, err
 	}
 	intelligence.Triggers = triggers
+	// Preserve the original body-drift location as a compatibility fallback,
+	// but promote it to policy scope so every outbound text path is protected.
+	if len(intelligence.Redact) == 0 && triggers.BodyDrift != nil {
+		intelligence.Redact = append([]string(nil), triggers.BodyDrift.Redact...)
+	}
 
 	topology, err := flattenTopology(policy.Spec.Topology)
 	if err != nil {

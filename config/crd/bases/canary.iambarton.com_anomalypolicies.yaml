@@ -240,7 +240,7 @@ spec:
                         template:
                           description: |-
                             Template is an optional Go template over the incident. Empty uses the
-                            built-in Block Kit message.
+                            built-in plain-Markdown message supported by webhooks and chat.postMessage.
                           type: string
                         webhookSecretRef:
                           description: WebhookSecretRef holds an incoming-webhook
@@ -377,7 +377,9 @@ spec:
                   hot:
                     description: |-
                       Hot configures the embedder used on the body-drift path, which runs on
-                      every passing check.
+                      every passing check. This setting is cluster-wide: all runner shards must
+                      produce vectors in the same embedding space. Conflicts are resolved
+                      deterministically by policy name and reported by the operator.
                     properties:
                       backend:
                         default: potion
@@ -401,6 +403,19 @@ spec:
                           image to the tokenizer vocab.
                         type: string
                     type: object
+                type: object
+              privacy:
+                description: |-
+                  Privacy applies redaction consistently to body drift, failure
+                  correlation, novelty, history, and language-model prompts.
+                properties:
+                  redact:
+                    description: |-
+                      Redact contains regular expressions replaced before any response or
+                      failure text leaves the probe runner. Built-in masking remains enabled.
+                    items:
+                      type: string
+                    type: array
                 type: object
               throttle:
                 description: Throttle bounds action frequency.
@@ -487,8 +502,9 @@ spec:
                         type: integer
                       redact:
                         description: |-
-                          Redact is a list of regular expressions stripped from the body BEFORE it
-                          is embedded or logged. Use it for anything the model should never see.
+                          Redact is retained for backwards compatibility. Prefer spec.privacy.redact,
+                          which also protects failure messages and external action prompts.
+                          Deprecated: use AnomalyPolicySpec.Privacy.Redact.
                         items:
                           type: string
                         type: array
@@ -752,6 +768,16 @@ spec:
               referencedBy:
                 description: ReferencedBy counts canaries currently using this policy.
                 type: integer
+              resolvedColdModel:
+                description: |-
+                  ResolvedColdModel is the cluster-wide correlation/novelty model selected
+                  from all referenced policies.
+                type: string
+              resolvedHotModel:
+                description: |-
+                  ResolvedHotModel is the cluster-wide body-drift model selected from all
+                  referenced policies.
+                type: string
             type: object
         required:
         - spec

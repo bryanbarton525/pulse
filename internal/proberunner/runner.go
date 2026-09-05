@@ -22,6 +22,12 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
+// maxHTTPResponseBytes is a hard safety ceiling for every HTTP-like probe.
+// Policy-level MaxBodyBytes controls how much text reaches the drift model,
+// while this limit protects assertions, journeys, and MCP parsing from a
+// target that returns an unbounded body.
+const maxHTTPResponseBytes = 4 << 20
+
 // ProbeResult holds the outcome of the most recent check for one probe.
 // The /results endpoint serializes a map of these to JSON.
 type ProbeResult struct {
@@ -42,10 +48,19 @@ type ProbeResult struct {
 	// this pod.
 	BodySnippet string `json:"-"`
 
-	// DriftScore and LatencyZScore are the model-driven scores for the most
-	// recent PASSING check. Zero means not evaluated or still warming up.
-	DriftScore    float64 `json:"driftScore,omitempty"`
-	LatencyZScore float64 `json:"latencyZScore,omitempty"`
+	// Scores are the model-driven values for the most recent passing check.
+	// State and sample count distinguish a real zero from warmup or a detector
+	// that did not run, without exposing response bodies.
+	DriftScore     float64 `json:"driftScore,omitempty"`
+	LatencyZScore  float64 `json:"latencyZScore,omitempty"`
+	DriftState     string  `json:"driftState,omitempty"`
+	DriftSamples   int     `json:"driftSamples,omitempty"`
+	LatencyState   string  `json:"latencyState,omitempty"`
+	LatencySamples int     `json:"latencySamples,omitempty"`
+	// LiveAgeSeconds is populated by the incident engine's aggregator using
+	// the cluster-side clock. This avoids a viewer confusing host/Kind VM clock
+	// skew with stale monitoring data.
+	LiveAgeSeconds float64 `json:"liveAgeSeconds,omitempty"`
 
 	// Policy names the AnomalyPolicy governing this probe, if any.
 	Policy string `json:"policy,omitempty"`
@@ -880,9 +895,13 @@ func (r *Runner) doHTTPRequest(
 		_ = response.Body.Close()
 	}()
 
-	responseBody, err := io.ReadAll(response.Body)
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxHTTPResponseBytes+1))
 	if err != nil {
 		return response.StatusCode, nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	if len(responseBody) > maxHTTPResponseBytes {
+		return response.StatusCode, nil, fmt.Errorf(
+			"response body exceeded the %d-byte safety limit", maxHTTPResponseBytes)
 	}
 
 	return response.StatusCode, responseBody, nil
