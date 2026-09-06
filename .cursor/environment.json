@@ -1,0 +1,10 @@
+{
+  "name": "Pulse operator (Kubebuilder)",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "user": "ubuntu",
+  "install": "./.cursor/install.sh",
+  "start": "./.cursor/start.sh"
+}
