@@ -1,5 +1,27 @@
 # pulse - AI Agent Guide
 
+## Cursor Cloud specific instructions
+
+The Cloud Agent environment is defined in `.cursor/` (Dockerfile + `environment.json`
++ `install.sh` + `start.sh`). It provides Go, Docker (started per-boot by
+`start.sh`), Kind, kubectl, and kubebuilder. Key gotchas in this nested-container VM:
+
+- **Go toolchain:** always run Go with the pre-installed official toolchain and
+  `GOTOOLCHAIN=local` (already exported in the image). The auto-downloaded
+  module-cache toolchain omits the `covdata` tool, which makes
+  `go test -coverprofile` (i.e. `make test`) fail with `no such tool "covdata"`.
+- **Kind clusters:** use `.cursor/kind-up.sh` to create a working cluster. It
+  applies the required workarounds — containerd `native` snapshotter (the VM root
+  fs is overlay so overlay-on-overlay mounts fail), a local image registry on the
+  `kind` network (that network has no internet egress and `kind load` cannot
+  unpack under the native snapshotter), and kube-proxy in `nftables` mode (the
+  bundled iptables-nft `iptables-restore` fails, breaking ClusterIP routing).
+- **Loading local images:** push to `localhost:5001/<name>` and reference that
+  registry in manifests; the node's CRI pulls from it. `kind load docker-image`
+  does not work here.
+- **Canary targets:** in-cluster pods have no external egress, so point demo
+  `HttpCanary` resources at in-cluster Services rather than public URLs.
+
 ## Project Structure
 
 **Single-group layout (default):**
