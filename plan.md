@@ -4,6 +4,8 @@ Status: proposed implementation plan. This PR establishes the work and acceptanc
 
 Target: `https://pulse.iambarton.com/book/`.
 
+Hosting repository: [bryanbarton525/homelab](https://github.com/bryanbarton525/homelab/tree/main/apps). The Pulse site application belongs at `homelab/apps/pulse_site/`; deployment resources follow that repository's separate `clusters/` convention. Documentation stays alongside Pulse code, and the site consumes a pinned documentation revision to avoid divergent copies.
+
 Baseline: `e786e52` on `feat/model-intelligence`, containing the validated demo and E2E fixes. This planning PR is stacked on that branch; retarget it to `main` after the parent PR merges, preserving a documentation-only diff.
 
 ## Outcome
@@ -43,6 +45,17 @@ book/theme/
 book/examples/
 .github/workflows/docs.yml
 ```
+
+The layout above is in the Pulse repository and owns book content, rendering, and validation. The site application and deployment live in homelab:
+
+```text
+apps/pulse_site/                    # Dockerfile, static server configuration, pinned book source, runbook
+.github/workflows/pulse-site-build.yml
+clusters/namespace-pulse-site/      # Kustomize deployment, Service, routing, TLS configuration
+clusters/argocd/pulse-site.yaml     # Argo CD Application
+```
+
+These are proposed new paths following the existing `apps/iambarton_site`, image-build workflow, namespace manifests, and Argo CD Application pattern. Keep application source under `apps/` and cluster configuration under `clusters/`.
 
 - Use a collapsible chapter sidebar, previous/next navigation, local search, copyable code blocks, deep links, light/dark themes, and readable mobile layouts.
 - Preserve Pulse branding while adopting the restrained reading layout of the Kubebuilder Book. Do not copy its logos or project-specific content.
@@ -121,12 +134,13 @@ Explain the demo control endpoint as a test fixture, including its scope and acc
 
 ## 6. Publish at pulse.iambarton.com/book/
 
-1. Inspect existing domain ownership, hosting configuration, DNS, TLS termination, and any content already served at the hostname. The repository currently has no documentation publishing workflow; do not assume which hosting provider owns the domain.
-2. Build a provider-independent static artifact served beneath `/book/`. Stage a preview first and test path handling without changing the hostname's root content.
-3. Select the deployment adapter from actual hosting evidence: existing static hosting/reverse proxy, or GitHub Pages if its custom-domain ownership and routing fit. A DNS record controls a hostname, not a URL path; `/book/` routing must be handled by the host or artifact layout.
-4. Add a workflow with separate validation, preview/artifact, and production publication responsibilities. Publish production only from the designated merged branch or release; keep PR preview credentials out of untrusted PR execution.
-5. Record required external account settings, domain verification, DNS and TLS changes concretely. Apply them only where the available access and user's site scope permit; identify any remaining account-dependent step precisely.
-6. Verify HTTPS, `/book` to `/book/` handling, nested chapter URLs, search, diagrams, links from old docs, cache invalidation, and a rollback to the previous static artifact.
+1. Implement the site at `homelab/apps/pulse_site/`. Follow the inspected homelab pattern: GitHub Actions builds application images into GHCR, Argo CD reconciles a Kustomize directory under `clusters/`, and Gateway API HTTPRoutes expose the site. GitHub Pages is not the deployment target.
+2. Keep canonical book sources in Pulse. Pin a Pulse commit or verified artifact in the homelab site build; record it in the image metadata and book. Define an explicit promotion PR that updates this pin and the deployed image digest together. Do not fetch a moving branch at container startup.
+3. Serve the generated static content beneath `/book/` in the site container. Test `/book` redirection and nested routes without stripping the prefix incorrectly. Preserve any existing content at the hostname root.
+4. Add `homelab/.github/workflows/pulse-site-build.yml` with validation and preview checks for PRs and GHCR publication from merged site changes. Use immutable image references for deployment. Pulse's docs workflow validates/builds the book; homelab owns site packaging and deployment.
+5. Add the namespace, Deployment, Service, readiness/liveness probes, resource settings, and Kustomize configuration under `clusters/namespace-pulse-site/`, plus `clusters/argocd/pulse-site.yaml`. Check app-of-apps discovery and repository instructions before wiring it in; merging an automatically synced Argo CD Application can initiate a deployment.
+6. Inspect the actual gateway, certificate issuer, external-dns/Cloudflare configuration, and existing `pulse.iambarton.com` record before defining host routing and TLS. The inspected portal uses a Gateway API route and external-dns hostname annotation; reuse the applicable convention without copying portal-specific names or credentials. DNS configures the hostname, while the server/route handles `/book/`.
+7. Open linked Pulse and homelab PRs, documenting source revision, image digest, routing, and rollout order. Verify HTTPS, `/book` to `/book/` handling, nested chapter URLs, search, diagrams, old documentation links, and cache behavior. Roll back by reverting the pinned source/image deployment change through GitOps.
 
 Acceptance requires the requested URL to serve the book. A local build or uploaded artifact alone is not publication.
 
@@ -158,7 +172,7 @@ The existing validation baseline includes ten demo scenarios, unit/envtest check
 3. Land the manual installation and deterministic canary chapters with recorded clean-cluster validation.
 4. Land model, incident, action, recovery, and contributor chapters with the experiment matrix and evidence.
 5. Migrate/refine operations, quick start, API reference, and architecture diagrams; preserve existing links.
-6. Add preview/publication workflow, configure the verified host, publish `/book/`, and verify the live site.
+6. Add the site application in `homelab/apps/pulse_site/` and linked image-build/GitOps changes, configure the verified host, publish `/book/`, and verify the live site.
 
 Do not mark a phase complete with placeholder chapters, omitted model prerequisites, untested copy/paste commands, or unavailable evidence represented as a successful result.
 
@@ -166,5 +180,6 @@ Do not mark a phase complete with placeholder chapters, omitted model prerequisi
 
 - [The Kubebuilder Book](https://book.kubebuilder.io/): requested reading/navigation reference.
 - [mdBook documentation](https://rust-lang.github.io/mdBook/): proposed generator, search, theme, and extension capabilities.
+- [Homelab applications](https://github.com/bryanbarton525/homelab/tree/main/apps): required site location; existing `iambarton_site` supplies the application/image/GitOps convention.
 
 Implementation should recheck toolchain and hosting documentation when selecting exact versions and deployment settings.
