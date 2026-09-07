@@ -4,6 +4,8 @@ Status: implementation started. Planning PR #3 merged into `feat/model-intellige
 
 ## Current handoff checkpoint
 
+Active draft PR: [#4 — implement Pulse Book and manual learning course](https://github.com/bryanbarton525/pulse/pull/4). First implementation commit: `2ad32a3`.
+
 Completed in the first implementation increment:
 
 - Added `book.toml` with `/book/` site URL, chapter navigation, search through mdBook defaults, and light/dark themes; pinned mdBook 0.4.52.
