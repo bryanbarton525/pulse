@@ -1,6 +1,6 @@
 # Pulse Book implementation plan
 
-Status: implementation started. Planning PR #3 merged into `feat/model-intelligence`. The implementation branch is `codex/pulse-book`, based on `46eb396`. The documentation site has not been deployed.
+Status: repository implementation complete through revision `7fa8a92`; external publication is blocked. Planning PR #3 merged into `feat/model-intelligence`. The implementation branch is `codex/pulse-book`. The documentation site has not been deployed.
 
 ## Current handoff checkpoint
 
@@ -8,21 +8,21 @@ Active draft PR: [#4 — implement Pulse Book and manual learning course](https:
 
 ### Cursor handoff — latest checkpoint
 
-Browser verification now passed for the simplified component diagram, both diagrams in light and Navy themes, interactive rerendering back to light, MiniLM search navigation under `/book/`, and the 400px mobile layout. No Mermaid render error was set; highlight.js emits only benign unknown-language warnings before Mermaid replaces the source blocks.
+The complete manual course is now present and connected: deterministic HTTP, 204, journey, MCP and gRPC chapters; intelligence installation, policy, Potion drift, latency, topology/similarity incidents, novelty, actions, degraded models/results, sharding, recovery, a contributor exercise, and an experiment matrix. Existing architecture, reconciliation, scaling, operations, Helm, testing, development, CRD, and journey sources are included as canonical references. `README.md` links all three entry paths, and `DEBUG_GUIDE.md` is a preserved redirect instead of a diverging copy.
 
-The model preparation increment pins Potion and MiniLM Hugging Face repository commits and verifies SHA-256 for all four downloaded inputs. A new manual `learn/prepare-models.md` chapter exposes the exact downloads, hashes, Potion conversion format, licenses, reset procedure, and the distinction between real model tests and skips. The pinned fetch completed: Potion converted to 512 dimensions and 63,091 rows, all four hashes passed, and converted output totaled 210 MiB. All real Potion tests ran without skips. On Linux amd64, the tagged real MiniLM tests passed with ONNX Runtime 1.22.0; measured exact replay similarity was 1.0 and the distinct HTTP-contract comparison was 0.941753688. This is host model evidence, not proof that the incident-engine image was built or deployed. The current machine has no Kind context or container runtime, so the target and runner port-forward commands remain outstanding.
+The generated book has 36 pages. mdBook 0.4.52 build and all local links/fragments pass. Browser verification passed sidebar navigation, nested `/book/` routes, `failureNovelty` search, previous/next keyboard navigation, diagrams on two pages in Light and Navy themes, and the 400px incidents layout. No Mermaid render error was set; only the known benign highlight.js Mermaid warning appeared.
 
-Branch: `codex/pulse-book`; keep pushing increments to draft PR #4. The PR base remains `feat/model-intelligence`, where the planning PR merged. Do not assume `main` contains its dependencies.
+Model preparation remains reproducible: pinned Potion/MiniLM revisions and four source hashes, 512-dimensional/63,091-row Potion conversion, real Potion tests, and tagged MiniLM ONNX tests with ONNX Runtime 1.22.0. All four Podman images now build with fully qualified base images. Container smoke validation loaded the 512-dimensional Potion model in the runner and MiniLM in the native incident engine. A passing 200 response produced measured Potion distance `0.15828632906491535`, an observed `bodyDrift` incident, and exactly one successful metric, LLM-fixture, Slack, and observability action. The fixture records showed the deterministic investigation, Slack payload, and Datadog payload; no real credentials were used.
 
-New files: manual `learn/install.md` and `learn/first-canary.md`, a reviewed Kustomize install overlay, and explicit target/canary YAML under `book/examples/`. `.dockerignore` now excludes the book so npm dependencies do not enter Go image build contexts.
+Protocol smoke validation against the built images observed a healthy two-step cookie journey, MCP initialize/202 initialized/tools-list with two tools, and named gRPC `SERVING`. Mutations produced the exact runner evidence for journey step-two content failure, missing `health.check`, and `NOT_SERVING`; stopping the gRPC server produced code `Unavailable`. HTTP target and runner results were also inspected directly.
 
-Executed on the isolated `kind-pulse-book` cluster with Podman: built and loaded controller/runner/target `localhost/pulse-*:book-v1` images; installed and waited for all three CRDs; applied rendered install overlay; manager and runner became Ready; deployed `book-shop/catalogue`; observed Healthy with HTTP 200 and matching `items`. Patched the contract to `a-marker-that-is-not-present`; observed Unhealthy with HTTP 200 and that exact failure message. Recovery is now verified: reapplied the original canary, the bounded Healthy wait passed, and a separate read confirmed `containsText=items`, `phase=Healthy`, and `Got expected status 200 and matched response text`. The chapter now explains asynchronous mounted-ConfigMap propagation before the next probe.
+The contributor exercise is implemented rather than illustrative: `HttpCanary.spec.interval` now has a generated maximum of 3600, with an envtest admission regression rejecting 3601. The focused regression and the complete non-E2E test suite passed with Kubernetes 1.35 envtest assets. `make test` itself reached passing package results but this machine's downloaded Go toolchain lacks `covdata`, so its coverage-file command exits nonzero; CI is the authoritative coverage invocation. `make lint-fix` is similarly blocked locally because the plugin-built linter reports Go 1.24 while the module targets 1.26.1.
 
-Browser evidence: both Mermaid diagrams render without overlapping labels in the architecture chapter. Nested navigation and local assets load; theme changes rerender the diagrams; MiniLM search and the 400px mobile layout passed. Book build and all links across 14 generated pages passed before adding the model chapter. The preview server may still be running in the `pulse-book-preview` tmux session.
+Earlier clean `kind-pulse-book` evidence remains valid for Podman/Kind on arm64: controller/runner/target install, CRDs, first canary healthy/failure/recovery. This cloud machine cannot execute the new clean-cluster prose order: nested Kind reaches kubeadm but cannot bootstrap because the parent container lacks required host capabilities. Docker is not installed, so Docker portability remains untested here.
 
-Next: execute the first-canary chapter's target/runner port-forward inspection commands when a lab runtime is available, then prepare and manually validate the incident-engine image and installation chapter. Continue manual canary variants and model experiments. Do not report installation of the later incident-engine/model image as completed: the completed Kubernetes increment only installs deterministic monitoring. No homelab implementation yet.
+Production publication is definitively blocked from this run. The authenticated GitHub principal cannot resolve `bryanbarton525/homelab`, and `pulse.iambarton.com` currently has no resolvable DNS record from this environment. No site, DNS, Gateway, Argo CD, or production mutation was attempted without repository/infrastructure access. Acceptance still requires a homelab-authorized run to implement the site/GitOps changes and verify the live HTTPS paths.
 
-Cursor bootstrap: `npm ci --prefix book --ignore-scripts`, `npm run --prefix book assets`, `mdbook build` with mdBook 0.4.52, then `python3 book/check-links.py`. Temporary local mdBook executable was `/private/tmp/pulse-mdbook-0.4.52/mdbook`. The preview server may need restarting; serve `book/build` as `/book/`, not the repository itself. Use explicit Kubernetes contexts. `pulse-demo` is separate from this lab. Preserve ignored graph/editor files; do not stage generated assets or bypass the large-file hook.
+Branch: `codex/pulse-book`; continue pushing to draft PR #4 with base `feat/model-intelligence`. Cursor bootstrap is `npm ci --prefix book --ignore-scripts`, `npm run --prefix book assets`, mdBook 0.4.52, and `python3 book/check-links.py`. Serve `book/build` beneath `/book/`. Use explicit Kubernetes contexts and do not represent the unavailable Kind/Docker/production gates as passed.
 
 ### Completed foundation and validation
 
@@ -44,15 +44,14 @@ Build tooling: official mdBook 0.4.52 for macOS arm64. Existing runtime test sui
 
 Next agent: start with `git status`, this checkpoint, and the implementation PR. Preserve unrelated untracked `cmd/homelab.code-workspace` and `graphify-out/`.
 
-Immediate next work, in order:
+Remaining work requires an environment with the missing external capabilities:
 
-1. Internal links and bundled Mermaid assets are implemented. Verify diagram rendering and theme switching in a browser, then replace the incomplete legacy architecture diagram with the verified book diagrams.
-2. Validate desktop/mobile rendering and `/book/` nested-path behavior. Verify the CI preview build on the PR; add release-asset integrity checking before production publication.
-3. Environment creation, CoreDNS readiness, deterministic image builds/install, and the first canary failure/recovery passed on Podman/Kind with Kubernetes v1.37.0 on arm64. Validate the outstanding port-forward inspection steps, then write and execute the manual model preparation and incident-engine installation chapters.
-4. Continue the chapter sequence below; update this checkpoint at each meaningful increment with files, test results, limitations, and next actions.
-5. Implement the homelab site and GitOps PR only after the content/build contract is usable. No homelab files or live cluster settings have been changed in this increment.
+1. Re-run the full prose order on a fresh privileged Kind host, including the new engine, action, sharding, restart, stale-result, and exact cleanup commands. Save per-chapter evidence rather than substituting the maintainer harness.
+2. Execute the separate Docker path. Current evidence covers Podman image builds and local container networking only.
+3. Grant this agent or a successor read/write access to `bryanbarton525/homelab` and the applicable DNS/Gateway/Argo CD environment. Inspect its current conventions, implement the pinned site and GitOps resources, open the linked PR, and verify `https://pulse.iambarton.com/book/`.
+4. Resolve any authoritative CI failures and retain the reproducible archive checksum produced by the book workflow.
 
-Known gaps: book is incomplete; revised diagram layout, interactive theme behavior, search, and mobile rendering need verification; model/protocol/action/contributor course chapters remain to be written and executed; Docker is untested; production hosting is not implemented. The manual target/runner port-forward steps still need execution. Do not report the book or site complete based on a successful mdBook build.
+Known gaps are therefore deployment/access gates, not missing book chapters: privileged clean-cluster execution, Docker portability, and production publication. Do not report the production site complete based on the successful local build or container-level runtime evidence.
 
 Target: `https://pulse.iambarton.com/book/`.
 
