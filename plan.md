@@ -1,6 +1,30 @@
 # Pulse Book implementation plan
 
-Status: proposed implementation plan. This PR establishes the work and acceptance criteria; it does not deploy the documentation site.
+Status: implementation started. Planning PR #3 merged into `feat/model-intelligence`. The implementation branch is `codex/pulse-book`, based on `46eb396`. The documentation site has not been deployed.
+
+## Current handoff checkpoint
+
+Completed in the first implementation increment:
+
+- Added `book.toml` with `/book/` site URL, chapter navigation, search through mdBook defaults, and light/dark themes; pinned mdBook 0.4.52.
+- Added a substantive component/ownership overview and manual isolated Kind environment chapter. Neither uses Make or demo orchestration.
+- Added introduction, book contributor instructions, and includes of canonical operations/development pages; unfinished course chapters are not listed as completed content.
+- Added a CI book build and downloadable preview artifact. This workflow does not publish the production site.
+- Ignored generated `book/build/` output.
+
+Validation performed: downloaded official mdBook 0.4.52 for macOS arm64 and successfully ran `mdbook build` from the repository root. This proves rendering succeeds, not that all links or manual commands work. The new laboratory chapter has not yet been executed on a clean cluster. Existing runtime tests were not repeated because this increment changes documentation only.
+
+Next agent: start with `git status`, this checkpoint, and the implementation PR. Preserve unrelated untracked `cmd/homelab.code-workspace` and `graphify-out/`.
+
+Immediate next work, in order:
+
+1. Resolve relative links in included operations/development pages and add an internal-link checker. Add accessible Mermaid support with bundled pinned assets, then replace the incomplete old architecture diagram with verified component and sequence diagrams.
+2. Validate desktop/mobile rendering and `/book/` nested-path behavior. Verify the CI preview build on the PR; add release-asset integrity checking before production publication.
+3. Execute the environment chapter from a clean `pulse-book` cluster, record platform/version results, then write and execute the manual image/model/CRD/RBAC/controller installation chapters.
+4. Continue the chapter sequence below; update this checkpoint at each meaningful increment with files, test results, limitations, and next actions.
+5. Implement the homelab site and GitOps PR only after the content/build contract is usable. No homelab files or live cluster settings have been changed in this increment.
+
+Known gaps: book is intentionally incomplete; operations/development include links still need migration checks; no Mermaid rendering yet; no clean-cluster validation of new prose; no Docker execution; no production hosting implementation. Do not report the book or site complete based on a successful mdBook build.
 
 Target: `https://pulse.iambarton.com/book/`.
 

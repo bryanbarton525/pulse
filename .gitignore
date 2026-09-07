@@ -45,3 +45,6 @@ hack/models/**
 /manager
 /probe-runner
 /incidentengine
+
+# Rendered documentation
+/book/build/

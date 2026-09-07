@@ -1,0 +1,18 @@
+[book]
+title = "The Pulse Book"
+authors = ["Pulse contributors"]
+language = "en"
+src = "book/src"
+
+[build]
+build-dir = "book/build"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/bryanbarton525/pulse"
+site-url = "/book/"
+
+[output.html.fold]
+enable = true
+level = 1
