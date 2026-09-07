@@ -11,7 +11,7 @@ build-dir = "book/build"
 default-theme = "light"
 preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/bryanbarton525/pulse"
-edit-url-template = "https://github.com/bryanbarton525/pulse/edit/main/book/src/{path}"
+edit-url-template = "https://github.com/bryanbarton525/pulse/edit/main/{path}"
 site-url = "/book/"
 additional-js = ["book/src/vendor/mermaid.min.js", "book/src/diagrams.js"]
 
