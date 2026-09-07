@@ -6,6 +6,20 @@ Status: implementation started. Planning PR #3 merged into `feat/model-intellige
 
 Active draft PR: [#4 — implement Pulse Book and manual learning course](https://github.com/bryanbarton525/pulse/pull/4). First implementation commit: `2ad32a3`.
 
+### Cursor handoff — latest checkpoint
+
+Branch: `codex/pulse-book`; keep pushing increments to draft PR #4. The PR base remains `feat/model-intelligence`, where the planning PR merged. Do not assume `main` contains its dependencies.
+
+New files: manual `learn/install.md` and `learn/first-canary.md`, a reviewed Kustomize install overlay, and explicit target/canary YAML under `book/examples/`. `.dockerignore` now excludes the book so npm dependencies do not enter Go image build contexts.
+
+Executed on the isolated `kind-pulse-book` cluster with Podman: built and loaded controller/runner/target `localhost/pulse-*:book-v1` images; installed and waited for all three CRDs; applied rendered install overlay; manager and runner became Ready; deployed `book-shop/catalogue`; observed Healthy with HTTP 200 and matching `items`. Patched the contract to `a-marker-that-is-not-present`; observed Unhealthy with HTTP 200 and that exact failure message. Session interruption prevented the original recovery command from completing; recovery has now been issued again and its result must be collected before claiming the full loop passed.
+
+Browser evidence: both Mermaid diagrams rendered in the architecture chapter at `http://127.0.0.1:8766/book/learn/components.html`; nested navigation and local assets loaded. A screenshot showed overlapping labels in the component graph, requiring simplification. Responsive behavior, interactive theme changes, and search are still unverified. Book build and all links across 14 generated pages passed.
+
+Next: finish recovery, simplify the component diagram, verify theme changes/search, then prepare the manual model chapter (the helper currently fetches moving Hugging Face `main` refs, so explain reproducibility limits or pin revisions). Continue manual canary variants and model experiments. Do not report installation of the later incident-engine/model image as completed: this increment only installs deterministic monitoring. No homelab implementation yet.
+
+Cursor bootstrap: `npm ci --prefix book --ignore-scripts`, `npm run --prefix book assets`, `mdbook build` with mdBook 0.4.52, then `python3 book/check-links.py`. Temporary local mdBook executable was `/private/tmp/pulse-mdbook-0.4.52/mdbook`. The preview server may need restarting; serve `book/build` as `/book/`, not the repository itself. Use explicit Kubernetes contexts. `pulse-demo` is separate from this lab. Preserve ignored graph/editor files; do not stage generated assets or bypass the large-file hook.
+
 Second increment: added Mermaid 11.17.2 with npm lockfile and locally generated assets, component and sequence diagrams, CRD/journey reference includes, and a generated-HTML link/fragment checker wired into CI. Updated stale development prerequisites and scaffolding guidance. `npm install` reported zero vulnerabilities; mdBook build and all local links/assets/fragments across 12 HTML pages passed. Browser rendering and theme switching remain unverified. Started a fresh `pulse-book` Kind cluster via the manual chapter; creation reached Ready, but final command output needs collecting before marking the chapter validated.
 
 Pre-commit recovery: generated `graphify-out/graph.json` and `graph.html` were accidentally staged and exceeded the large-file hook limit. Exclude local graph output and `cmd/homelab.code-workspace` from commits; preserve both on disk. Generated Mermaid assets remain ignored and are reconstructed from the lockfile during builds.

@@ -6,6 +6,8 @@
 
 - [Understand the components](learn/components.md)
 - [Create your laboratory](learn/environment.md)
+- [Install the controller by hand](learn/install.md)
+- [Write and break your first canary](learn/first-canary.md)
 
 # Operate and contribute
 
