@@ -6,7 +6,7 @@ Build the native ONNX incident engine, load it into the isolated Kind node, depl
 
 ## Prerequisites and starting state
 
-Complete model preparation, controller installation, and the first canary. Keep `kind-pulse-book` explicit. These checks must pass:
+Complete the policy, Potion, and latency chapters on `book-shop/catalogue` first. Those exercises opt one canary into intelligence and may already have loaded `localhost/pulse-incident-engine:book-v1`. This chapter adds a second lab namespace, `shop`, with the multi-service fixture set used by later incident, novelty, and action experiments. It does not replace `book-shop`. Keep `kind-pulse-book` explicit. These checks must pass:
 
 ```sh
 kubectl --context kind-pulse-book wait --for=condition=Ready node --all --timeout=120s
@@ -16,7 +16,7 @@ test -s hack/models/potion/model.bin
 test -s hack/models/minilm/model.onnx
 ```
 
-The controller must already have `PULSE_INCIDENT_ENGINE_IMAGE=localhost/pulse-incident-engine:book-v1`, as rendered by `book/examples/install/kustomization.yaml`.
+The controller must already have `PULSE_INCIDENT_ENGINE_IMAGE=localhost/pulse-incident-engine:book-v1`, as rendered by `book/examples/install/kustomization.yaml`. If `kubectl --context kind-pulse-book -n pulse-system get deployment pulse-incident-engine` already succeeds, the engine is present because `book-shop/catalogue` is still opted in; later shop canaries join that same process.
 
 ## Build and load the engine
 
@@ -41,7 +41,7 @@ docker build -f Dockerfile.incidentengine \
 kind load docker-image localhost/pulse-incident-engine:book-v1 --name pulse-book
 ```
 
-An unsupported architecture fails during the ONNX Runtime download stage instead of silently building a model-free engine.
+An unsupported architecture fails during the ONNX Runtime download stage instead of silently building a model-free engine. Skip the build and load if `podman image exists localhost/pulse-incident-engine:book-v1` or `docker image inspect localhost/pulse-incident-engine:book-v1` already succeeds from the policy chapter.
 
 ## Deploy inspectable fixtures
 
@@ -57,7 +57,26 @@ kubectl --context kind-pulse-book -n shop wait --for=condition=Available \
   deployment --all --timeout=180s
 ```
 
-The `shop` namespace now has catalogue, two real catalogue callers, an unrelated HTTP control, an MCP server, and a gRPC health server. The `__control` routes mutate fixture behavior in place. They simulate a changed release response; they are not a blue/green Kubernetes rollout.
+The `shop` namespace now has catalogue, two real catalogue callers, an unrelated HTTP control, an MCP server, and a gRPC health server. Leave `book-shop` in place; later recovery commands name both namespaces. The `__control` routes mutate fixture behavior in place. They simulate a changed release response; they are not a blue/green Kubernetes rollout.
+
+The sink image is `python:3.12-alpine` and is not one of the local `book-v1` images. Load it into the Kind node before applying the manifest, or the sink Pod stays in `ImagePullBackOff` on an offline host.
+
+With Podman:
+
+```sh
+podman pull docker.io/library/python:3.12-alpine
+podman tag docker.io/library/python:3.12-alpine python:3.12-alpine
+PULSE_SINK_ARCHIVE=$(mktemp)
+podman save --format docker-archive -o "$PULSE_SINK_ARCHIVE" python:3.12-alpine
+kind load image-archive "$PULSE_SINK_ARCHIVE" --name pulse-book
+```
+
+With Docker:
+
+```sh
+docker pull python:3.12-alpine
+kind load docker-image python:3.12-alpine --name pulse-book
+```
 
 Deploy the local recording sink:
 
@@ -157,7 +176,7 @@ kubectl --context kind-pulse-book -n pulse-system rollout status \
 Keep these resources for subsequent experiments. Remove only disposable rendered files and archives when no process is using them:
 
 ```sh
-rm -f "$PULSE_BOOK_TARGETS" "${PULSE_ENGINE_ARCHIVE:-}"
+rm -f "$PULSE_BOOK_TARGETS" "${PULSE_ENGINE_ARCHIVE:-}" "${PULSE_SINK_ARCHIVE:-}"
 ```
 
 Checkpoint: identify which evidence proves MiniLM loaded, which evidence only proves the process is Ready, and why a healthy deterministic baseline does not by itself prove that Potion has enough samples to detect drift.

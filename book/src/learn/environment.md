@@ -2,7 +2,7 @@
 
 This chapter creates an isolated Kubernetes cluster named `pulse-book`. It does not install Pulse yet. The installation chapter will build on the cluster created here.
 
-You need a working Docker or Podman runtime, Kind, kubectl, Git, Python 3, and Go compatible with the repository's `go.mod`. Check the versions before continuing:
+You need a working Docker or Podman runtime, Kind, kubectl, Git, Python 3, and Go compatible with the repository's `go.mod`. The gRPC chapter also needs a health client; that chapter installs `grpc-health-probe` or uses a temporary Go program. Check the versions before continuing:
 
 ```sh
 kind version

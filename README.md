@@ -408,7 +408,7 @@ For a fully in-cluster deployment, the cluster still needs access to a real prob
 - **Domain:** `iambarton.com`
 - **API Group:** `canary.iambarton.com`
 - **Built with:** Kubebuilder v4, controller-runtime v0.23
-- **Go version:** 1.25+
+- **Go version:** 1.26.1+
 
 ## License
 

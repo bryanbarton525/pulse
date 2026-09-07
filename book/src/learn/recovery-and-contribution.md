@@ -2,7 +2,7 @@
 
 ## Learning objective
 
-Return every fixture and custom resource to a known state, make a schema-validation change with a regression test, regenerate derived artifacts through their generator, build and load the changed image, replay the admission check, and finally delete only `kind-pulse-book`.
+Return every fixture and custom resource to a known state, inspect the already-merged HTTP interval bound, apply the same one-hour maximum to `GrpcCanary`, add a regression test, regenerate derived artifacts through their generator, build and load the changed image, replay the admission check, and finally delete only `kind-pulse-book`.
 
 > Runtime verification required: this contributor exercise is an executable procedure, not a claim that the change or tests were run while authoring this chapter. Perform it on a disposable worktree or branch; do not commit unless that is your contribution workflow.
 
@@ -16,7 +16,7 @@ kubectl --context kind-pulse-book cluster-info
 git status --short
 ```
 
-The exercise intentionally edits API source, creates a test, and regenerates checked-in output. Preserve unrelated work by using a clean worktree.
+The exercise intentionally edits gRPC API source, creates a test, and regenerates checked-in output. Preserve unrelated work by using a clean worktree. Do not treat the already-merged HTTP interval maximum as unfinished work.
 
 ## Recover every mutable target
 
@@ -79,23 +79,38 @@ kubectl --context kind-pulse-book -n pulse-system wait \
   --for=delete deployment/pulse-incident-engine --timeout=120s
 ```
 
-Keep the original `book-shop/catalogue` canary for the contribution replay.
+Keep the original `book-shop/catalogue` canary. The admission replay creates a new `GrpcCanary` and does not need a live gRPC target.
+
+## Inspect the already-merged HTTP bound
+
+`HttpCanary.spec.interval` already has `Maximum=3600` on this branch, with a generated CRD maximum and `internal/controller/httpcanary_validation_envtest_test.go`. Read that change as the pattern. Do not re-run a replace that looks for the old unmarked interval; that edit is already present and the assertion would fail.
+
+```sh
+grep -n -A4 'Interval is how often' api/v1alpha1/httpcanary_types.go
+grep -n -A6 'interval:' config/crd/bases/canary.iambarton.com_httpcanaries.yaml | head -n 20
+```
+
+Expect `+kubebuilder:validation:Maximum=3600` and CRD `maximum: 3600`.
 
 ## Change one supported validation
 
-Add an upper bound of one hour to the top-level HTTP interval. Use Python for an exact, guarded source edit:
+Apply the same one-hour upper bound to `GrpcCanary.spec.interval`, which still has only `Minimum=5`. Use Python for an exact, guarded source edit:
 
 ```sh
 python3 - <<'PY'
 from pathlib import Path
-path = Path("api/v1alpha1/httpcanary_types.go")
+path = Path("api/v1alpha1/grpccanary_types.go")
 text = path.read_text()
-old = '''\t// +kubebuilder:validation:Minimum=5
+old = '''\t// Interval is the frequency in seconds to run the check.
+\t// +kubebuilder:validation:Minimum=5
 \t// +kubebuilder:default=30
+\t// +optional
 \tInterval int `json:"interval,omitempty"`'''
-new = '''\t// +kubebuilder:validation:Minimum=5
+new = '''\t// Interval is the frequency in seconds to run the check.
+\t// +kubebuilder:validation:Minimum=5
 \t// +kubebuilder:validation:Maximum=3600
 \t// +kubebuilder:default=30
+\t// +optional
 \tInterval int `json:"interval,omitempty"`'''
 assert text.count(old) == 1
 path.write_text(text.replace(old, new))
@@ -106,8 +121,10 @@ This is an API admission rule, not runner logic: values above 3600 should be rej
 
 ## Add a meaningful envtest regression
 
+Do not overwrite the existing HTTP interval test. Add a sibling file for gRPC:
+
 ```sh
-cat > internal/controller/httpcanary_validation_envtest_test.go <<'EOF'
+cat > internal/controller/grpccanary_validation_envtest_test.go <<'EOF'
 package controller
 
 import (
@@ -120,17 +137,16 @@ import (
     canaryv1alpha1 "github.com/bryanbarton525/pulse/api/v1alpha1"
 )
 
-var _ = Describe("HttpCanary schema validation", func() {
+var _ = Describe("GrpcCanary schema validation", func() {
     It("rejects an interval above one hour", func() {
-        canary := &canaryv1alpha1.HttpCanary{
+        canary := &canaryv1alpha1.GrpcCanary{
             ObjectMeta: metav1.ObjectMeta{
                 GenerateName: "interval-too-large-",
                 Namespace:    "default",
             },
-            Spec: canaryv1alpha1.HttpCanarySpec{
-                URL:            "http://example.invalid",
-                Interval:       3601,
-                ExpectedStatus: 200,
+            Spec: canaryv1alpha1.GrpcCanarySpec{
+                URL:      "orders.invalid:50051",
+                Interval: 3601,
             },
         }
 
@@ -140,8 +156,8 @@ var _ = Describe("HttpCanary schema validation", func() {
     })
 })
 EOF
-gofmt -w api/v1alpha1/httpcanary_types.go \
-  internal/controller/httpcanary_validation_envtest_test.go
+gofmt -w api/v1alpha1/grpccanary_types.go \
+  internal/controller/grpccanary_validation_envtest_test.go
 ```
 
 ## Regenerate and test without wrappers
@@ -166,12 +182,12 @@ KUBEBUILDER_ASSETS="$KUBEBUILDER_ASSETS" \
 go test ./internal/proberunner -count=1
 go vet ./...
 git diff --check
-git diff -- api/v1alpha1/httpcanary_types.go \
-  internal/controller/httpcanary_validation_envtest_test.go \
-  config/crd/bases/canary.iambarton.com_httpcanaries.yaml
+git diff -- api/v1alpha1/grpccanary_types.go \
+  internal/controller/grpccanary_validation_envtest_test.go \
+  config/crd/bases/canary.iambarton.com_grpccanaries.yaml
 ```
 
-Expected evidence, requiring later verification: the envtest case passes because API-server admission returns `Invalid`; the generated HTTP CRD contains `maximum: 3600`; unrelated generated files either remain unchanged or have generator-explainable differences.
+Expected evidence, requiring later verification: the envtest case passes because API-server admission returns `Invalid`; the generated gRPC CRD contains `maximum: 3600`; unrelated generated files either remain unchanged or have generator-explainable differences. The existing HTTP interval test should still pass.
 
 ## Build, load, and replay manually
 
@@ -184,7 +200,7 @@ podman save --format docker-archive -o "$PULSE_BOOK_CHANGED_ARCHIVE" \
   localhost/pulse-controller:book-validation-v1
 kind load image-archive "$PULSE_BOOK_CHANGED_ARCHIVE" --name pulse-book
 kubectl --context kind-pulse-book apply \
-  -f config/crd/bases/canary.iambarton.com_httpcanaries.yaml
+  -f config/crd/bases/canary.iambarton.com_grpccanaries.yaml
 kubectl --context kind-pulse-book -n pulse-system set image \
   deployment/pulse-controller-manager \
   manager=localhost/pulse-controller:book-validation-v1
@@ -205,14 +221,13 @@ Replay admission with editable YAML:
 ```sh
 cat > /tmp/pulse-book-invalid-interval.yaml <<'EOF'
 apiVersion: canary.iambarton.com/v1alpha1
-kind: HttpCanary
+kind: GrpcCanary
 metadata:
   name: invalid-interval
   namespace: book-shop
 spec:
-  url: http://catalogue.book-shop.svc:8080/
+  url: orders-grpc.book-shop.svc:50051
   interval: 3601
-  expectedStatus: 200
 EOF
 if kubectl --context kind-pulse-book apply -f /tmp/pulse-book-invalid-interval.yaml; then
   echo "ERROR: admission accepted interval 3601" >&2
@@ -221,9 +236,9 @@ fi
 sed 's/interval: 3601/interval: 3600/' \
   /tmp/pulse-book-invalid-interval.yaml > /tmp/pulse-book-valid-interval.yaml
 kubectl --context kind-pulse-book apply -f /tmp/pulse-book-valid-interval.yaml
-kubectl --context kind-pulse-book -n book-shop get httpcanary invalid-interval \
+kubectl --context kind-pulse-book -n book-shop get grpccanary invalid-interval \
   -o jsonpath='{.spec.interval}{"\n"}'
-kubectl --context kind-pulse-book -n book-shop delete httpcanary invalid-interval
+kubectl --context kind-pulse-book -n book-shop delete grpccanary invalid-interval
 ```
 
 The rejected apply should name `spec.interval` and the maximum. The accepted object should print `3600`. Building the manager proves the changed source still compiles; applying the generated CRD is what changes admission behavior.
@@ -238,7 +253,7 @@ Do not run that example in this exercise because it creates a different API and 
 
 ## Failure symptoms and bounded recovery
 
-If envtest accepts 3601, inspect the generated CRD loaded by its test environment. If Kind accepts it, confirm the regenerated CRD was applied. If the manager keeps the old image, inspect its image ID and pull policy:
+If envtest accepts 3601, inspect the generated gRPC CRD loaded by its test environment. If Kind accepts it, confirm the regenerated `grpccanaries` CRD was applied. If the manager keeps the old image, inspect its image ID and pull policy:
 
 ```sh
 kubectl --context kind-pulse-book -n pulse-system get deployment \
@@ -272,7 +287,7 @@ kind delete cluster --name pulse-book
 kind get clusters
 ```
 
-This leaves local container images, downloaded model artifacts under `hack/models`, `/tmp/pulse-book-tools`, `/tmp/pulse-book-envtest`, and your source/test/generated contribution. Review them with `git status --short`. Remove local model artifacts only with the exact reset in the model-preparation chapter; remove or commit source changes according to your contributor workflow.
+This leaves local container images, downloaded model artifacts under `hack/models`, `/tmp/pulse-book-tools`, `/tmp/pulse-book-envtest`, and your gRPC interval source/test/generated contribution. Review them with `git status --short`. Remove local model artifacts only with the exact reset in the model-preparation chapter; remove or commit source changes according to your contributor workflow.
 
 ## Checkpoint
 

@@ -116,13 +116,13 @@ In a second terminal:
 
 ```sh
 curl --fail --max-time 5 -sS http://127.0.0.1:18081/mcp \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":"manual-init","method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"book","version":"1"}}}'
-curl --fail --max-time 5 -sS http://127.0.0.1:18081/mcp \
-  -H 'Content-Type: application/json' \
+curl --fail --max-time 5 -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18081/mcp \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'
 curl --fail --max-time 5 -sS http://127.0.0.1:18081/mcp \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":"manual-tools","method":"tools/list"}'
 ```
 

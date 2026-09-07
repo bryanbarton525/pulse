@@ -52,7 +52,7 @@ kubectl --context kind-pulse-book -n pulse-system get --raw \
   > /tmp/pulse-book-metrics-first.txt
 ```
 
-After the five-second incident-settling debounce, the engine embeds the root failure text. With no cluster above similarity `0.999`, it creates a cluster and reports `novel: true`, provided the one-second startup settling period has elapsed. Novelty does not detect the outage; deterministic canary assertions already did that.
+After the five-second dispatch debounce, the engine embeds the root failure text. With no cluster above similarity `0.999`, it creates a cluster and reports `novel: true`, provided the one-second startup settling period has elapsed. Novelty does not detect the outage; deterministic canary assertions already did that.
 
 ## Recover completely
 

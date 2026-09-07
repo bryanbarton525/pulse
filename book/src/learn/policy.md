@@ -8,7 +8,7 @@ Create an `AnomalyPolicy`, attach it to one canary, and trace API defaults and p
 
 ## Prerequisites and starting state
 
-Start at the repository root with `kind-pulse-book`, the manager, model-bearing runner image, `book-shop/catalogue`, and `HttpCanary/catalogue` from earlier chapters. Prepare and build the model artifacts first. Build and load the optional engine explicitly:
+Start at the repository root with `kind-pulse-book`, the manager, model-bearing runner image, `book-shop/catalogue`, and `HttpCanary/catalogue` from earlier chapters. This chapter must run before the shop fixture install: a policy object alone does not start the engine, and the later multi-canary stack would hide that empty starting state. Prepare and build the model artifacts first. Build and load the optional engine explicitly:
 
 ```sh
 podman build -f Dockerfile.incidentengine -t localhost/pulse-incident-engine:book-v1 .
@@ -106,7 +106,7 @@ kubectl --context kind-pulse-book -n pulse-system logs deployment/pulse-incident
 
 Expected evidence, requiring later runtime verification:
 
-- the flattened probe names `book-shop/book-triage`;
+- the probe name `book-shop/catalogue` with `policy: book-shop/book-triage`;
 - the per-canary values `threshold: 0.2`, `zScoreThreshold: 4`, and both warmups at `5`;
 - default model paths `/models/potion/model.bin` and `/models/minilm/model.onnx`;
 - `referencedBy: 1`, with resolved `potion:` and `onnx:` labels;

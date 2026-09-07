@@ -6,15 +6,20 @@ Query the standard `grpc.health.v1.Health` service for the named service `shop.O
 
 ## Prerequisites and starting state
 
-The `kind-pulse-book` cluster must have a Ready manager and runner, the `book-shop` namespace, and the already-loaded `localhost/pulse-demo-target:book-v1` image. Install `grpc-health-probe` on the host and confirm it is callable:
+The `kind-pulse-book` cluster must have a Ready manager and runner, the `book-shop` namespace, and the already-loaded `localhost/pulse-demo-target:book-v1` image. Install a pinned `grpc-health-probe` on the host:
 
 ```sh
+GOBIN="${GOBIN:-$(go env GOPATH)/bin}"
+export PATH="$GOBIN:$PATH"
+go install github.com/grpc-ecosystem/grpc-health-probe@v0.4.56
 grpc-health-probe -version
 kubectl --context kind-pulse-book -n pulse-system rollout status statefulset/pulse-probe-runner --timeout=180s
 kubectl --context kind-pulse-book get namespace book-shop
 ```
 
-`grpc-health-probe` is used instead of `grpcurl` because this fixture registers the standard health service but does not register gRPC server reflection. `grpcurl` would therefore also need a local health `.proto` or descriptor set. The health probe is an accurate client for the same unary `grpc.health.v1.Health/Check` RPC Pulse calls.
+`go install` places the binary in `GOBIN`. If that directory is not on your `PATH`, the version command fails even though the install succeeded.
+
+`grpc-health-probe` is used instead of `grpcurl` because this fixture registers the standard health service but does not register gRPC server reflection. `grpcurl` would therefore also need a local health `.proto` or descriptor set. The health probe is an accurate client for the same unary `grpc.health.v1.Health/Check` RPC Pulse calls. If you cannot install the probe, use the temporary Go health client in [the experiment matrix](experiment-matrix.md) for the same `shop.Orders` check.
 
 Deploy the editable target:
 

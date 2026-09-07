@@ -31,7 +31,7 @@ The book is the connected reading experience. Existing repository entry points r
 | Component ownership and reconciliation sequence | `cmd/main.go`, `internal/controller/canary_controller.go`, `workloads.go`, `status_syncer.go` | Controller/envtest suite plus browser-rendered diagrams |
 | HTTP and journey commands | `internal/proberunner/http.go`, journey implementation, `cmd/demotarget/main.go` | Unit tests, executable YAML parsing, manual target/result inspection |
 | MCP exchange | MCP runner implementation and `cmd/demotarget` JSON-RPC routes | Protocol tests and manual initialize/initialized/tools-list exchange |
-| gRPC health | gRPC runner and standard `grpc.health.v1` fixture | gRPC tests and named-service client query |
+| gRPC health | gRPC runner and standard `grpc.health.v1` fixture | gRPC tests, pinned `grpc-health-probe`, and the temporary Go health client |
 | Potion conversion and drift | `hack/fetch-models.py`, `internal/embed/potion.go`, anomaly drift code | Pinned hashes, real Potion tests, model-loaded log, measured score |
 | MiniLM correlation and novelty | `internal/embed/onnx_enabled.go`, incident engine and aggregator | Tagged real ONNX tests, engine image model-loaded log, scenario merge evidence |
 | Actions | policy action resolver, dispatcher, `hack/demo/05-sink.yaml` | Sink request logs filtered by incident ID and exact action counts |

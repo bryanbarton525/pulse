@@ -13,16 +13,16 @@
 - [Install the controller by hand](learn/install.md)
 - [Write and break your first canary](learn/first-canary.md)
 - [Extend an HTTP contract](learn/http-contracts.md)
-- [Run an HTTP journey](learn/journeys.md)
+- [Check 204 responses and cookie journeys](learn/journeys.md)
 - [Validate an MCP server](learn/mcp.md)
 - [Validate gRPC health](learn/grpc.md)
 
 ## Intelligence from first principles
 
-- [Install the intelligence runtime](learn/install-intelligence.md)
 - [Write an anomaly policy](learn/policy.md)
 - [Detect passing-body drift](learn/potion-drift.md)
 - [Detect latency shifts](learn/latency.md)
+- [Install the intelligence runtime](learn/install-intelligence.md)
 - [Correlate and rank incidents](learn/incidents.md)
 - [Replay and classify novelty](learn/novelty.md)
 
