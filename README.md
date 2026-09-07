@@ -6,9 +6,9 @@
 
 Pulse is a Kubernetes operator that lets developers define canary health checks as custom resources. Apply a YAML file, and Pulse continuously monitors your endpoints and reports status back on the CR.
 
-Pulse supports simple single-request checks, scripted multi-step HTTP journeys for login, session, and checkout-style flows, and MCP tool-availability validation over HTTP.
+Pulse supports simple single-request checks, scripted multi-step HTTP journeys for login, session, and checkout-style flows, MCP tool-availability validation over HTTP, and gRPC health checks.
 
-For a self-contained Kind cluster with every canary type, narrated failures, live model evidence, action payloads, and hands-on validation labs, start with the [runnable quick start](docs/quick-start.html). The rest of `docs/` covers production architecture and operations.
+Choose the [Pulse Book](book/src/introduction.md) for the complete manual learning path, the [runnable quick start](docs/quick-start.html) for a self-contained automated Kind tour, or the [operations guide](docs/operations.md) for an existing installation. The book connects architecture, protocol, model, incident, action, recovery, and contributor exercises without hiding the underlying commands behind the demo harness.
 
 ## Quick Start
 

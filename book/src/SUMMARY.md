@@ -1,6 +1,7 @@
 # Summary
 
 [Welcome](introduction.md)
+[Quick start](quick-start.md)
 
 # Learn Pulse
 
@@ -34,9 +35,15 @@
 
 # Operate and contribute
 
+- [Architecture reference](architecture.md)
+- [Reconciliation design](reconciliation.md)
+- [Scaling and sharding](scaling.md)
 - [Operations](operations.md)
+- [Helm deployment](helm.md)
+- [Testing and validation](testing.md)
 - [Development](development.md)
 - [CRD design](crd-design.md)
 - [HTTP journeys](http-journey-canary.md)
+- [Documentation inventory](documentation-inventory.md)
 
 [Build and contribute to this book](book-development.md)
