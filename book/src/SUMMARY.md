@@ -6,6 +6,7 @@
 
 - [Understand the components](learn/components.md)
 - [Create your laboratory](learn/environment.md)
+- [Prepare the model artifacts](learn/prepare-models.md)
 - [Install the controller by hand](learn/install.md)
 - [Write and break your first canary](learn/first-canary.md)
 
