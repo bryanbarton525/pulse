@@ -23,6 +23,9 @@ endif
 # scaffolded by default. However, you might want to replace it to use other
 # tools. (i.e. podman)
 CONTAINER_TOOL ?= docker
+# Extra flags for image builds. Use --network=host when BuildKit cannot
+# reach proxy.golang.org through the default Docker network.
+DOCKER_BUILD_FLAGS ?=
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -152,15 +155,15 @@ run-proberunner: manifests generate fmt vet ## Run the probe runner from your ho
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+	$(CONTAINER_TOOL) build $(DOCKER_BUILD_FLAGS) -t ${IMG} .
 
 .PHONY: docker-build-proberunner
 docker-build-proberunner: models-present ## Build docker image with the probe runner.
-	$(CONTAINER_TOOL) build -f Dockerfile.proberunner -t ${PROBE_RUNNER_IMG} .
+	$(CONTAINER_TOOL) build $(DOCKER_BUILD_FLAGS) -f Dockerfile.proberunner -t ${PROBE_RUNNER_IMG} .
 
 .PHONY: docker-build-incidentengine
 docker-build-incidentengine: models-present ## Build docker image with the incident engine.
-	$(CONTAINER_TOOL) build -f Dockerfile.incidentengine -t ${INCIDENT_ENGINE_IMG} .
+	$(CONTAINER_TOOL) build $(DOCKER_BUILD_FLAGS) -f Dockerfile.incidentengine -t ${INCIDENT_ENGINE_IMG} .
 
 .PHONY: docker-push-incidentengine
 docker-push-incidentengine: ## Push the incident engine image.
@@ -258,10 +261,10 @@ demo-cluster: ## Create the kind cluster (no-op if it already exists).
 demo-images: fetch-models ## Build the operator and deterministic target images and load them into kind.
 	@$(KIND) get clusters 2>/dev/null | grep -qx "$(DEMO_CLUSTER)" \
 		|| { echo "Demo cluster $(DEMO_CLUSTER) does not exist; run 'make demo-cluster' first" >&2; exit 1; }
-	$(CONTAINER_TOOL) build -f Dockerfile               -t pulse-controller:$(DEMO_TAG) .
-	$(CONTAINER_TOOL) build -f Dockerfile.proberunner   -t pulse-probe-runner:$(DEMO_TAG) .
-	$(CONTAINER_TOOL) build -f Dockerfile.incidentengine -t pulse-incident-engine:$(DEMO_TAG) .
-	$(CONTAINER_TOOL) build -f Dockerfile.demo-target -t pulse-demo-target:$(DEMO_TAG) .
+	$(CONTAINER_TOOL) build $(DOCKER_BUILD_FLAGS) -f Dockerfile               -t pulse-controller:$(DEMO_TAG) .
+	$(CONTAINER_TOOL) build $(DOCKER_BUILD_FLAGS) -f Dockerfile.proberunner   -t pulse-probe-runner:$(DEMO_TAG) .
+	$(CONTAINER_TOOL) build $(DOCKER_BUILD_FLAGS) -f Dockerfile.incidentengine -t pulse-incident-engine:$(DEMO_TAG) .
+	$(CONTAINER_TOOL) build $(DOCKER_BUILD_FLAGS) -f Dockerfile.demo-target -t pulse-demo-target:$(DEMO_TAG) .
 	@for image in pulse-controller pulse-probe-runner pulse-incident-engine pulse-demo-target; do \
 		echo "loading $$image:$(DEMO_TAG)"; \
 		if [ "$(CONTAINER_TOOL)" = "podman" ]; then \
