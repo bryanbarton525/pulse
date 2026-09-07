@@ -17,7 +17,13 @@ Run these commands at the Pulse repository root with Node.js 22+ and npm availab
 mdbook serve --hostname 127.0.0.1 --port 3001
 ```
 
-The eventual production application lives in `homelab/apps/pulse_site/` and serves the book at `/book/`. This local build does not publish the site. Mermaid is bundled locally; browser rendering, theme switching, nested production paths, and hosting validation remain tracked in `plan.md`.
+The CI build verifies the SHA-256 digest of the pinned mdBook release before extracting it. It also packages the generated site as a deterministic `pulse-book.tar.gz` and publishes `pulse-book.tar.gz.sha256` beside it. Verify both files before using a preview artifact as a deployment input:
+
+```sh
+sha256sum --check pulse-book.tar.gz.sha256
+```
+
+The eventual production application lives in `homelab/apps/pulse_site/` and serves the book at `/book/`. This local build does not publish the site. Mermaid is bundled locally; production routing and hosting validation remain tracked in `plan.md`.
 
 Add chapters to `book/src/SUMMARY.md` only when their content is useful. Keep original operations and development documents canonical while their book pages include them. Their linked CRD and journey references are included too; run the link checker after adding references. Do not duplicate them into independently edited copies.
 
