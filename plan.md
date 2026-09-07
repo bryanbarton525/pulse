@@ -1,6 +1,6 @@
 # Pulse Book implementation plan
 
-Status: repository implementation complete through revision `7fa8a92`; external publication is blocked. Planning PR #3 merged into `feat/model-intelligence`. The implementation branch is `codex/pulse-book`. The documentation site has not been deployed.
+Status: repository implementation is complete on the current `codex/pulse-book` branch head; external publication is blocked. Planning PR #3 merged into `feat/model-intelligence`. The documentation site has not been deployed.
 
 ## Current handoff checkpoint
 
