@@ -14,16 +14,12 @@ The incident engine is deployed only when a canary uses intelligence. The contro
 
 ```mermaid
 flowchart TD
-    API[Canaries and policy in Kubernetes API] -->|desired configuration| Controller[Controller manager]
-    Controller -->|reconciles config and workloads| Runner[Probe runner shards]
-    Controller -->|reconciles when intelligence enabled| Engine[Incident engine]
-    Runner -->|protocol requests| Target[Monitored application]
-    Target -->|response| Runner
-    Runner -->|observations and result snapshots| Engine
-    Engine -->|policy actions| Sink[Investigation and notification endpoints]
-    Runner -->|live results without engine| Controller
-    Engine -->|aggregated results and incidents| Controller
-    Controller -->|meaningful status changes| API
+    API[Kubernetes API] -->|configuration| Controller[Controller manager]
+    Controller -->|manages| Runner[Probe runner shards]
+    Controller -->|manages if enabled| Engine[Incident engine]
+    Runner -->|checks| Target[Monitored application]
+    Runner -->|observations| Engine
+    Engine -->|actions| Sink[Investigation and notifications]
 ```
 
 The controller owns Kubernetes updates. Runners execute requests; the engine aggregates their evidence. Both result paths end at the status syncer, which projects the applicable live view into the API.

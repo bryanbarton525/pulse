@@ -2,7 +2,7 @@
 
 Pulse turns a monitoring contract into a Kubernetes resource. An HTTP canary can require a particular status and response text; journey, MCP, and gRPC checks add protocol-specific contracts. Optional intelligence detects changes that those contracts do not express and helps group failures into incidents.
 
-This book is being built in stages. The component overview and isolated laboratory setup are the first manual learning chapters. Installation, model experiments, and failure-injection chapters are still being developed; the current book is not yet a complete installation course. Progress and the handoff checklist live in [plan.md](https://github.com/bryanbarton525/pulse/blob/codex/pulse-book/plan.md).
+This book is being built in stages. The manual path currently covers components, isolated laboratory setup, controller installation, and a first HTTP canary with assertion failure and recovery. Model experiments and the remaining canary variants are still being developed; the current book is not yet a complete course. Progress and the handoff checklist live in [plan.md](https://github.com/bryanbarton525/pulse/blob/codex/pulse-book/plan.md).
 
 Choose a path according to what you need:
 

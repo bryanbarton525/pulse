@@ -12,19 +12,21 @@ Branch: `codex/pulse-book`; keep pushing increments to draft PR #4. The PR base 
 
 New files: manual `learn/install.md` and `learn/first-canary.md`, a reviewed Kustomize install overlay, and explicit target/canary YAML under `book/examples/`. `.dockerignore` now excludes the book so npm dependencies do not enter Go image build contexts.
 
-Executed on the isolated `kind-pulse-book` cluster with Podman: built and loaded controller/runner/target `localhost/pulse-*:book-v1` images; installed and waited for all three CRDs; applied rendered install overlay; manager and runner became Ready; deployed `book-shop/catalogue`; observed Healthy with HTTP 200 and matching `items`. Patched the contract to `a-marker-that-is-not-present`; observed Unhealthy with HTTP 200 and that exact failure message. Session interruption prevented the original recovery command from completing; recovery has now been issued again and its result must be collected before claiming the full loop passed.
+Executed on the isolated `kind-pulse-book` cluster with Podman: built and loaded controller/runner/target `localhost/pulse-*:book-v1` images; installed and waited for all three CRDs; applied rendered install overlay; manager and runner became Ready; deployed `book-shop/catalogue`; observed Healthy with HTTP 200 and matching `items`. Patched the contract to `a-marker-that-is-not-present`; observed Unhealthy with HTTP 200 and that exact failure message. Recovery is now verified: reapplied the original canary, the bounded Healthy wait passed, and a separate read confirmed `containsText=items`, `phase=Healthy`, and `Got expected status 200 and matched response text`. The chapter now explains asynchronous mounted-ConfigMap propagation before the next probe.
 
-Browser evidence: both Mermaid diagrams rendered in the architecture chapter at `http://127.0.0.1:8766/book/learn/components.html`; nested navigation and local assets loaded. A screenshot showed overlapping labels in the component graph, requiring simplification. Responsive behavior, interactive theme changes, and search are still unverified. Book build and all links across 14 generated pages passed.
+Browser evidence: both Mermaid diagrams rendered in the architecture chapter at `http://127.0.0.1:8766/book/learn/components.html`; nested navigation and local assets loaded. A screenshot showed overlapping labels in the component graph; this checkpoint simplifies its edges and labels, but the revised layout still needs visual verification. Responsive behavior, interactive theme changes, and search are unverified. `book/src/diagrams.js` chooses its theme only on initial load; implement and test rerendering on theme changes. Book build and all links across 14 generated pages passed. The preview server is no longer running.
 
-Next: finish recovery, simplify the component diagram, verify theme changes/search, then prepare the manual model chapter (the helper currently fetches moving Hugging Face `main` refs, so explain reproducibility limits or pin revisions). Continue manual canary variants and model experiments. Do not report installation of the later incident-engine/model image as completed: this increment only installs deterministic monitoring. No homelab implementation yet.
+Next: verify the simplified component diagram and theme changes/search, execute the first-canary chapter's target/runner port-forward inspection commands (not yet validated), then prepare the manual model chapter (the helper currently fetches moving Hugging Face `main` refs, so explain reproducibility limits or pin revisions). Continue manual canary variants and model experiments. Do not report installation of the later incident-engine/model image as completed: this increment only installs deterministic monitoring. No homelab implementation yet.
 
 Cursor bootstrap: `npm ci --prefix book --ignore-scripts`, `npm run --prefix book assets`, `mdbook build` with mdBook 0.4.52, then `python3 book/check-links.py`. Temporary local mdBook executable was `/private/tmp/pulse-mdbook-0.4.52/mdbook`. The preview server may need restarting; serve `book/build` as `/book/`, not the repository itself. Use explicit Kubernetes contexts. `pulse-demo` is separate from this lab. Preserve ignored graph/editor files; do not stage generated assets or bypass the large-file hook.
 
-Second increment: added Mermaid 11.17.2 with npm lockfile and locally generated assets, component and sequence diagrams, CRD/journey reference includes, and a generated-HTML link/fragment checker wired into CI. Updated stale development prerequisites and scaffolding guidance. `npm install` reported zero vulnerabilities; mdBook build and all local links/assets/fragments across 12 HTML pages passed. Browser rendering and theme switching remain unverified. Started a fresh `pulse-book` Kind cluster via the manual chapter; creation reached Ready, but final command output needs collecting before marking the chapter validated.
+### Completed foundation and validation
+
+Added Mermaid 11.17.2 with npm lockfile and locally generated assets, component and sequence diagrams, CRD/journey reference includes, and a generated-HTML link/fragment checker wired into CI. Updated stale development prerequisites and scaffolding guidance. Dependency installation reported zero vulnerabilities at that checkpoint.
 
 Pre-commit recovery: generated `graphify-out/graph.json` and `graph.html` were accidentally staged and exceeded the large-file hook limit. Exclude local graph output and `cmd/homelab.code-workspace` from commits; preserve both on disk. Generated Mermaid assets remain ignored and are reconstructed from the lockfile during builds.
 
-Latest verification: all four pre-commit hooks passed after removing local generated files from staging. Collected the manual cluster run: node Ready, no preinstalled CRDs, and the newly added bounded CoreDNS rollout check passed. `pulse-book` remains available for the manual installation chapters; `pulse-demo` is a separate existing cluster. Kind changed the current context, so continue using explicit contexts. Rebuilt Mermaid assets and the book; all local links/fragments/assets across 12 HTML pages passed again.
+All four pre-commit hooks passed after removing local generated files from staging. The manual environment run verified node Ready, no preinstalled CRDs, and the bounded CoreDNS rollout check. `pulse-book` now contains the deterministic installation and recovered first canary; `pulse-demo` is a separate existing cluster. Kind changed the current context, so continue using explicit contexts.
 
 Completed in the first implementation increment:
 
@@ -34,7 +36,7 @@ Completed in the first implementation increment:
 - Added a CI book build and downloadable preview artifact. This workflow does not publish the production site.
 - Ignored generated `book/build/` output.
 
-Validation performed: downloaded official mdBook 0.4.52 for macOS arm64 and successfully ran `mdbook build` from the repository root. This proves rendering succeeds, not that all links or manual commands work. The new laboratory chapter has not yet been executed on a clean cluster. Existing runtime tests were not repeated because this increment changes documentation only.
+Build tooling: official mdBook 0.4.52 for macOS arm64. Existing runtime test suites were not repeated for these documentation-only increments. Manual lab evidence is recorded above; it is not full course or model validation.
 
 Next agent: start with `git status`, this checkpoint, and the implementation PR. Preserve unrelated untracked `cmd/homelab.code-workspace` and `graphify-out/`.
 
@@ -42,11 +44,11 @@ Immediate next work, in order:
 
 1. Internal links and bundled Mermaid assets are implemented. Verify diagram rendering and theme switching in a browser, then replace the incomplete legacy architecture diagram with the verified book diagrams.
 2. Validate desktop/mobile rendering and `/book/` nested-path behavior. Verify the CI preview build on the PR; add release-asset integrity checking before production publication.
-3. Environment creation passed on Podman/Kind with Kubernetes v1.37.0 on arm64. Initial CoreDNS pods were still starting after node readiness, so the chapter now explicitly waits for CoreDNS. Complete that check, then write and execute the manual image/model/CRD/RBAC/controller installation chapters.
+3. Environment creation, CoreDNS readiness, deterministic image builds/install, and the first canary failure/recovery passed on Podman/Kind with Kubernetes v1.37.0 on arm64. Validate the outstanding port-forward inspection steps, then write and execute the manual model preparation and incident-engine installation chapters.
 4. Continue the chapter sequence below; update this checkpoint at each meaningful increment with files, test results, limitations, and next actions.
 5. Implement the homelab site and GitOps PR only after the content/build contract is usable. No homelab files or live cluster settings have been changed in this increment.
 
-Known gaps: book is incomplete; Mermaid browser rendering/theme behavior and `/book/` preview still need verification; manual installation chapters remain to be written and executed; Docker is untested; production hosting is not implemented. Do not report the book or site complete based on a successful mdBook build.
+Known gaps: book is incomplete; revised diagram layout, interactive theme behavior, search, and mobile rendering need verification; model/protocol/action/contributor course chapters remain to be written and executed; Docker is untested; production hosting is not implemented. The manual target/runner port-forward steps still need execution. Do not report the book or site complete based on a successful mdBook build.
 
 Target: `https://pulse.iambarton.com/book/`.
 

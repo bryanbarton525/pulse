@@ -46,6 +46,8 @@ kubectl --context kind-pulse-book -n pulse-system get statefulset pulse-probe-ru
 
 Find `book-shop/catalogue`, its URL and assertions in the configuration. Find the image, mounted configuration, and shared service account behavior in the workload. These resources are reconciled by the controller. Make contract changes to the canary, not to the rendered ConfigMap.
 
+Mounted ConfigMap updates do not arrive instantly. In the validated lab, the controller updated configuration before the runner's next reload; the first healthy result followed that reload. A Ready runner only proves its process is ready, not that the newest canary definition has reached it. Check the reload log and the exact result message when a bounded wait takes longer than expected.
+
 To compare persisted status with the live result, start a second port-forward:
 
 ```sh
