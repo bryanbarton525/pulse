@@ -43,6 +43,31 @@ func TestSlackWebhookPostsMessage(t *testing.T) {
 	}
 }
 
+func TestSlackOmitsKnownShapeWhenNoveltyWasNotEvaluated(t *testing.T) {
+	t.Parallel()
+
+	server, got := captureServer(t, http.StatusOK, "ok")
+	action, err := NewSlackAction("notify", proberunner.ProbeSlackAction{
+		WebhookCredentialID: "hook",
+	}, CredentialMap{"hook": server.URL})
+	if err != nil {
+		t.Fatalf("NewSlackAction() error = %v", err)
+	}
+	current := testIncident()
+	current.Trigger = incident.TriggerBodyDrift
+	current.Novel = false
+	current.NoveltyEvaluated = false
+	if _, err := action.Fire(context.Background(), current); err != nil {
+		t.Fatalf("Fire() error = %v", err)
+	}
+
+	var payload map[string]string
+	_ = json.Unmarshal(got.body, &payload)
+	if strings.Contains(payload["text"], "seen before") {
+		t.Fatalf("message claims novelty was evaluated: %q", payload["text"])
+	}
+}
+
 func TestSlackBotTokenPostsToEachChannel(t *testing.T) {
 	t.Parallel()
 

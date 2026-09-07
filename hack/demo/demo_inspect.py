@@ -164,9 +164,14 @@ def print_incidents():
         print("No open incidents. The engine closes an incident after its members recover.")
         return
     for incident in incidents:
+        novelty = (
+            cell(incident.get("novel"))
+            if incident.get("noveltyEvaluated")
+            else "not evaluated"
+        )
         print(
             f"{incident.get('id')}  trigger={incident.get('trigger')}  "
-            f"novel={cell(incident.get('novel'))}  root={incident.get('rootCause')}"
+            f"novel={novelty}  root={incident.get('rootCause')}"
         )
         print(f"  signature: {incident.get('signature')}")
         for member in incident.get("members", []):

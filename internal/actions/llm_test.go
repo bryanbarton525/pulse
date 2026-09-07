@@ -58,6 +58,28 @@ func TestLLMSendsChatCompletionRequest(t *testing.T) {
 	}
 }
 
+func TestLLMPromptOmitsNoveltyWhenNotEvaluated(t *testing.T) {
+	t.Parallel()
+
+	server, got := captureServer(t, http.StatusOK, `{"choices":[{"message":{"content":"ok"}}]}`)
+	action := NewLLMAction("investigate", proberunner.ProbeLLMAction{
+		Endpoint: server.URL, TimeoutSeconds: 30,
+	}, CredentialMap{}, nil, nil)
+	current := testIncident()
+	current.Trigger = "bodyDrift"
+	current.Novel = false
+	current.NoveltyEvaluated = false
+
+	if _, err := action.Fire(context.Background(), current); err != nil {
+		t.Fatalf("Fire() error = %v", err)
+	}
+	var payload chatRequest
+	_ = json.Unmarshal(got.body, &payload)
+	if strings.Contains(payload.Messages[1].Content, "failure shape has") {
+		t.Fatalf("prompt claims novelty was evaluated:\n%s", payload.Messages[1].Content)
+	}
+}
+
 // The prompt carries the WHOLE incident. That is the payoff of correlating
 // first — the model sees the blast radius rather than one symptom.
 func TestLLMPromptDescribesEveryMemberAndTopology(t *testing.T) {

@@ -341,7 +341,8 @@ make docker-build-proberunner    # Build probe runner container image
 make docker-build-incidentengine # Build incident engine container image
 make helm-deploy IMG=... PROBE_RUNNER_IMAGE=... # Install the operator with Helm
 make test                        # Run unit tests
-make test-e2e                    # Run e2e tests (requires Kind)
+make test-e2e                    # Run e2e tests with Docker (requires Kind)
+make test-e2e CONTAINER_TOOL=podman # Same isolated suite with Podman
 ```
 
 The incident engine is the only component that needs cgo and ONNX Runtime, and only when

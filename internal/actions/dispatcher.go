@@ -217,7 +217,8 @@ func (d *Dispatcher) fireForPolicy(ctx context.Context, policy string, current *
 		// metrics and notify operators, but they do not spend another LLM call.
 		if action.Type() == TypeLLM && current.Trigger == incident.TriggerFailureCorrelation &&
 			rootProbe.Intelligence != nil &&
-			rootProbe.Intelligence.Triggers.FailureNovelty != nil && !current.Novel {
+			rootProbe.Intelligence.Triggers.FailureNovelty != nil &&
+			current.NoveltyEvaluated && !current.Novel {
 			logger.V(1).Info("Skipping investigation for a known failure shape", "action", action.Name())
 			continue
 		}

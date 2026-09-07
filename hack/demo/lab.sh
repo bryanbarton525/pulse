@@ -78,7 +78,10 @@ Lab 1 — change a deterministic validation and undo it:
   make demo-inspect CANARY=unrelated
   kubectl --context kind-pulse-demo -n shop patch httpcanary unrelated --type merge \
     -p '{"spec":{"containsText":"a-marker-that-is-not-present"}}'
-  make demo-status                              # observe fresh failure + incident
+  until kubectl --context kind-pulse-demo -n shop get httpcanary unrelated \
+    -o jsonpath='{.status.message}' | grep -q 'a-marker-that-is-not-present'; do sleep 1; done
+  make demo-inspect CANARY=unrelated            # observe the new assertion's failure
+  make demo-incidents
   make demo-reset-definitions                   # exact reset of demo-owned CRs
   make demo-restore
 

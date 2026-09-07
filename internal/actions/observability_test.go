@@ -42,13 +42,14 @@ func captureServer(t *testing.T, status int, response string) (*httptest.Server,
 func testIncident() *incident.Incident {
 	at := time.Unix(1_700_000_000, 0).UTC()
 	return &incident.Incident{
-		ID:        "inc-1",
-		Signature: "sig-1",
-		Trigger:   incident.TriggerFailureCorrelation,
-		RootCause: "data/postgres",
-		Policy:    "pulse-system/platform",
-		Novel:     true,
-		UpdatedAt: at,
+		ID:               "inc-1",
+		Signature:        "sig-1",
+		Trigger:          incident.TriggerFailureCorrelation,
+		RootCause:        "data/postgres",
+		Policy:           "pulse-system/platform",
+		Novel:            true,
+		NoveltyEvaluated: true,
+		UpdatedAt:        at,
 		Members: []incident.Member{
 			{
 				Probe: "data/postgres", Role: incident.RoleRootCause,

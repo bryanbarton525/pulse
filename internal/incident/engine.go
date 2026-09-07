@@ -602,6 +602,7 @@ func (e *Engine) classifyNoveltyLocked(
 			)
 			clusterID = result.ClusterID
 			current.Novel = result.Novel
+			current.NoveltyEvaluated = true
 		}
 	}
 
@@ -611,6 +612,9 @@ func (e *Engine) classifyNoveltyLocked(
 
 func (e *Engine) dispatchLocked(ctx context.Context, current *Incident) {
 	if e.dispatcher == nil {
+		return
+	}
+	if current.dispatchingTrigger == current.Trigger || current.dispatchedTrigger == current.Trigger {
 		return
 	}
 
@@ -643,6 +647,12 @@ func (e *Engine) dispatchLocked(ctx context.Context, current *Incident) {
 			e.mu.Unlock()
 			return
 		}
+		trigger := live.Trigger
+		if live.dispatchingTrigger == trigger || live.dispatchedTrigger == trigger {
+			e.mu.Unlock()
+			return
+		}
+		live.dispatchingTrigger = trigger
 		// Snapshot the generation before embedding. Model calls can block, so
 		// they must not hold the engine lock used by ingestion and read APIs.
 		generation := live.revision
@@ -668,7 +678,15 @@ func (e *Engine) dispatchLocked(ctx context.Context, current *Incident) {
 
 		e.mu.Lock()
 		live, stillOpen = e.open[id]
-		if !stillOpen || live.RootCause != rootCause || live.revision != generation {
+		if !stillOpen {
+			e.mu.Unlock()
+			return
+		}
+		if live.RootCause != rootCause || live.revision != generation || live.Trigger != trigger {
+			if live.dispatchingTrigger == trigger {
+				live.dispatchingTrigger = ""
+			}
+			e.dispatchLocked(dispatchCtx, live)
 			e.mu.Unlock()
 			return
 		}
@@ -678,6 +696,8 @@ func (e *Engine) dispatchLocked(ctx context.Context, current *Incident) {
 		if classify {
 			e.classifyNoveltyLocked(live, rootProbe, vector)
 		}
+		live.dispatchingTrigger = ""
+		live.dispatchedTrigger = trigger
 		snapshot := *live
 		snapshot.Members = append([]Member(nil), live.Members...)
 		snapshot.MergeEvidence = append([]MergeEvidence(nil), live.MergeEvidence...)

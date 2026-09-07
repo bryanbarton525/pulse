@@ -163,7 +163,7 @@ func buildIntelligenceViews(incidents []incident.Incident) map[string]intelligen
 				Role:       member.Role,
 				Trigger:    current.Trigger,
 			}
-			if current.Trigger == incident.TriggerFailureCorrelation {
+			if current.NoveltyEvaluated {
 				novel := current.Novel
 				status.Novel = &novel
 			}

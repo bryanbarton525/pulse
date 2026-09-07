@@ -173,10 +173,12 @@ func (a *LLMAction) buildPrompt(current *incident.Incident) string {
 	fmt.Fprintf(&builder, "- Detected by: %s\n", current.Trigger)
 	fmt.Fprintf(&builder, "- Suspected root cause: %s\n", current.RootCause)
 	fmt.Fprintf(&builder, "- Affected checks: %d\n", len(current.Members))
-	if current.Novel {
-		builder.WriteString("- This failure shape has not been seen before.\n")
-	} else {
-		builder.WriteString("- This failure shape has been seen before.\n")
+	if current.NoveltyEvaluated {
+		if current.Novel {
+			builder.WriteString("- This failure shape has not been seen before.\n")
+		} else {
+			builder.WriteString("- This failure shape has been seen before.\n")
+		}
 	}
 	builder.WriteString("\n")
 

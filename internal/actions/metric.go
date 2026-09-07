@@ -51,9 +51,12 @@ func (m *Metrics) RecordIncident(current *incident.Incident) {
 		return
 	}
 
-	novel := "false"
-	if current.Novel {
-		novel = "true"
+	novel := "not_evaluated"
+	if current.NoveltyEvaluated {
+		novel = "false"
+		if current.Novel {
+			novel = "true"
+		}
 	}
 	m.incidents.WithLabelValues(current.Trigger, novel).Inc()
 

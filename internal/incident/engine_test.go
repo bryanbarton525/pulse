@@ -209,6 +209,47 @@ func TestNoveltyEmbeddingDoesNotBlockReadsOrDispatchRecoveredIncident(t *testing
 	}
 }
 
+func TestIncidentUpdateDuringNoveltyEmbeddingDispatchesOnce(t *testing.T) {
+	t.Parallel()
+
+	model := &blockingNoveltyEmbedder{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	dispatched := &recordingDispatcher{}
+	engine := NewEngine(EngineOptions{
+		Embedder:      model,
+		Dispatcher:    dispatched,
+		Logger:        logr.Discard(),
+		DispatchDelay: 10 * time.Millisecond,
+	})
+	engine.LoadProbes([]proberunner.Probe{
+		probeWithCorrelation("default/api-a", "pulse-system/app", nil),
+		probeWithCorrelation("default/api-b", "pulse-system/app", nil),
+	})
+	now := time.Now()
+	engine.Ingest(context.Background(), failure("default/api-a", "shared failure", now))
+
+	select {
+	case <-model.started:
+	case <-time.After(time.Second):
+		t.Fatal("novelty embedding did not start")
+	}
+
+	engine.Ingest(context.Background(), failure(
+		"default/api-b", "shared failure", now.Add(time.Second)))
+	close(model.release)
+	waitForIncidents(t, dispatched, 1)
+	time.Sleep(100 * time.Millisecond)
+
+	if got := dispatched.count(); got != 1 {
+		t.Fatalf("dispatched %d times after incident changed during embedding, want 1", got)
+	}
+	if got := len(dispatched.last().Members); got != 2 {
+		t.Fatalf("dispatched incident has %d members, want 2", got)
+	}
+}
+
 func TestHealthyResultClosesIncidentAfterLostRecovery(t *testing.T) {
 	t.Parallel()
 

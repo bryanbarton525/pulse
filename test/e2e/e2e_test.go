@@ -59,7 +59,7 @@ var _ = Describe("Manager", Ordered, func() {
 
 		By("labeling the namespace to enforce the restricted security policy")
 		cmd = exec.Command("kubectl", "label", "--overwrite", "ns", namespace,
-			"pod-security.kubernetes.io/enforce=restricted")
+			"pod-security.kubernetes.io/enforce=restricted", "metrics=enabled")
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
 
@@ -226,7 +226,7 @@ var _ = Describe("Manager", Ordered, func() {
 							"image": "curlimages/curl:latest",
 							"command": ["/bin/sh", "-c"],
 							"args": [
-								"for i in $(seq 1 30); do curl -v -k -H 'Authorization: Bearer %s' https://%s.%s.svc.cluster.local:8443/metrics && exit 0 || sleep 2; done; exit 1"
+								"for i in $(seq 1 30); do curl -v -k --connect-timeout 2 --max-time 5 -H 'Authorization: Bearer %s' https://%s.%s.svc.cluster.local:8443/metrics && exit 0 || sleep 2; done; exit 1"
 							],
 							"securityContext": {
 								"readOnlyRootFilesystem": true,

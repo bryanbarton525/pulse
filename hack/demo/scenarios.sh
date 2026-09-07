@@ -142,7 +142,8 @@ sink_line_count() {
 
 show_new_actions() {
   local before=$1; shift
-  local start previous=-1 current=-2 stable=0 waited=0 args=() incident
+  local previous=-1 current=-2 stable=0 waited=0 args=() incident
+  : "$before" # retained for call-site compatibility; incident IDs provide exact filtering
   [ "$DEMO_TEACH" = 1 ] || return 0
   # The LLM request is logged before its response is returned. Give the rest
   # of the synchronous action chain time to arrive so the evidence is complete.
@@ -153,11 +154,9 @@ show_new_actions() {
     sleep 1
     waited=$((waited + 1))
   done
-  start=$((before + 1))
   for incident in "$@"; do args+=(--incident "$incident"); done
   note "Evidence 3/3 — outbound action payloads recorded by the local sink"
   kc -n "$NS_SINK" logs deploy/sink --since=24h 2>/dev/null \
-    | sed -n "${start},\$p" \
     | python3 hack/demo/show-actions.py "${args[@]}"
   pause_demo
 }
@@ -183,6 +182,11 @@ prepare_scenario() {
   kc -n pulse-system rollout restart deployment/pulse-incident-engine >/dev/null
   kc -n pulse-system rollout status deployment/pulse-incident-engine --timeout=180s >/dev/null
   wait_incidents_closed
+  local settling
+  settling=$(kc -n pulse-system get anomalypolicy demo-triage \
+    -o jsonpath='{.spec.triggers.failureNovelty.settlingPeriodSeconds}')
+  [ -n "$settling" ] || settling=0
+  sleep "$((settling + 1))"
   teach "Scenario isolation: the incident engine was restarted so prior demo runs cannot suppress this chapter as already known."
 }
 
@@ -245,19 +249,17 @@ assert_one_llm() {
 }
 
 set_behavior() {
-  local deployment=$1 behavior=$2
-  kc -n "$NS_APP" set env "deployment/$deployment" "DEMO_BEHAVIOR=$behavior" >/dev/null
-  kc -n "$NS_APP" rollout status "deployment/$deployment" --timeout=180s >/dev/null
+	local service=$1 behavior=$2 response
+	response=$(kc create --raw "/api/v1/namespaces/$NS_APP/services/http:$service:8080/proxy/__control" -f - \
+		<<< "{\"behavior\":\"$behavior\"}")
+	python3 -c 'import json,sys; payload=json.load(sys.stdin); expected=sys.argv[1]; assert payload.get("behavior") == expected, payload' \
+		"$behavior" <<< "$response"
 }
 
 set_behaviors() {
-  local behavior=$1; shift
-  local resources=() deployment
-  for deployment in "$@"; do resources+=("deployment/$deployment"); done
-  kc -n "$NS_APP" set env "${resources[@]}" "DEMO_BEHAVIOR=$behavior" >/dev/null
-  for deployment in "$@"; do
-    kc -n "$NS_APP" rollout status "deployment/$deployment" --timeout=180s >/dev/null
-  done
+	local behavior=$1; shift
+	local service
+	for service in "$@"; do set_behavior "$service" "$behavior"; done
 }
 
 wait_all_healthy() {
@@ -324,6 +326,7 @@ scenario_latency() {
   teach "Validation: all three endpoints must still return their expected HTTP status."
   teach "Mutation: catalogue sleeps for two seconds; checkout and search make real calls to it and inherit the delay."
   teach "Under the hood: local EWMA statistics detect repeated z-score breaches; no embedding model is needed."
+  teach "Each canary owns its baseline, so this produces three passing latency incidents; failure correlation is demonstrated separately."
   prepare_scenario
   warm_drift_and_latency_baselines
   local catalogue_id checkout_id search_id before_lines
@@ -465,10 +468,8 @@ scenario_outage() {
   prepare_scenario
   local correlated_id unrelated_id before_lines
   before_lines=$(sink_line_count)
-  kc -n "$NS_APP" set env deployment/catalogue DEMO_BEHAVIOR=outage >/dev/null
-  kc -n "$NS_APP" set env deployment/unrelated DEMO_BEHAVIOR=control-fail >/dev/null
-  kc -n "$NS_APP" rollout status deployment/catalogue --timeout=180s >/dev/null
-  kc -n "$NS_APP" rollout status deployment/unrelated --timeout=180s >/dev/null
+	set_behavior catalogue outage
+	set_behavior unrelated control-fail
   wait_correlated_outage
   wait_for httpcanary unrelated '{.status.phase}' Unhealthy
   correlated_id=$(incident_id httpcanary catalogue)
@@ -490,10 +491,8 @@ scenario_similarity() {
   prepare_scenario
   local pair_id control_id before_lines
   before_lines=$(sink_line_count)
-  kc -n "$NS_APP" set env deployment/unrelated DEMO_BEHAVIOR=similarity-fail >/dev/null
-  kc -n "$NS_APP" set env deployment/orders-grpc DEMO_BEHAVIOR=grpc-fail >/dev/null
-  kc -n "$NS_APP" rollout status deployment/unrelated --timeout=180s >/dev/null
-  kc -n "$NS_APP" rollout status deployment/orders-grpc --timeout=180s >/dev/null
+	set_behavior unrelated similarity-fail
+	set_behavior orders-grpc grpc-fail
   wait_for httpcanary similar-a '{.status.phase}' Unhealthy
   wait_for httpcanary similar-b '{.status.phase}' Unhealthy
   wait_for grpccanary orders '{.status.phase}' Unhealthy

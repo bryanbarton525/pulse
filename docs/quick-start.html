@@ -602,7 +602,7 @@ make demo-tour-paced     <span class="p"># pause with each failure live so you c
 <span class="p"># demo-scenarios is an equivalent alias; run individual chapters below</span></code></pre>
 
     <pre><code>make demo-green-deploy   <span class="p"># semantic body drift while status remains 200</span>
-make demo-latency        <span class="p"># slow catalogue latency propagates to its two real callers</span>
+make demo-latency        <span class="p"># three local baselines catch one delay propagating through real callers</span>
 make demo-http-contract  <span class="p"># expected 204 changes to 200</span>
 make demo-content        <span class="p"># status stays 200 but a required body marker disappears</span>
 make demo-journey        <span class="p"># second journey step violates its assertion</span>
@@ -616,11 +616,13 @@ make demo-novelty        <span class="p"># repeat shape reports novel=false and 
 
       <article class="scenario is-hot">
         <div class="scenario-head">
-          <h3>A passing rollout that is wrong</h3>
+          <h3>A passing release that is wrong</h3>
           <span class="pill hot">potion · hot path</span>
         </div>
-        <p>Changes the catalogue Deployment's behavior while it still answers <code>200</code> with well-formed JSON — but the collection
-          comes back empty. A bad feature flag, a query regression, an index that never finished
+        <p>Switches the demo target's behavior in place to simulate a new release while it still
+          answers <code>200</code> with well-formed JSON — but the collection comes back empty. The
+          in-place control avoids introducing rollout connection errors, so the evidence is only the
+          failure being taught: a bad feature flag, a query regression, or an index that never finished
           rebuilding.</p>
         <pre><code>make demo-green-deploy</code></pre>
         <p class="expect"><b>Expect:</b> <code>catalogue</code> stays
@@ -744,6 +746,10 @@ make demo-inspect CANARY=mcp-tools    <span class="p"># desired spec + observed 
       assertion itself. This example asks for a body marker the catalogue does not return:</p>
     <pre><code>kubectl --context kind-pulse-demo -n shop patch httpcanary unrelated --type merge \
   -p '{"spec":{"containsText":"a-marker-that-is-not-present"}}'
+
+<span class="p"># status is asynchronous; wait until this exact new assertion has been evaluated</span>
+until kubectl --context kind-pulse-demo -n shop get httpcanary unrelated \
+  -o jsonpath='{.status.message}' | grep -q 'a-marker-that-is-not-present'; do sleep 1; done
 
 make demo-inspect CANARY=unrelated
 make demo-incidents

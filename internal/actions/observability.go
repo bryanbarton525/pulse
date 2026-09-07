@@ -118,7 +118,7 @@ type record struct {
 	Trigger   string            `json:"trigger"`
 	RootCause string            `json:"rootCause"`
 	Members   []string          `json:"members"`
-	Novel     bool              `json:"novel"`
+	Novel     *bool             `json:"novel,omitempty"`
 	Score     float64           `json:"score,omitempty"`
 	Policy    string            `json:"policy,omitempty"`
 	Tags      map[string]string `json:"tags,omitempty"`
@@ -142,18 +142,22 @@ func (a *ObservabilityAction) record(current *incident.Incident) record {
 		timestamp = time.Now()
 	}
 
-	return record{
+	entry := record{
 		Message:   message,
 		Incident:  current.ID,
 		Trigger:   current.Trigger,
 		RootCause: current.RootCause,
 		Members:   current.ProbeNames(),
-		Novel:     current.Novel,
 		Score:     score,
 		Policy:    current.Policy,
 		Tags:      a.config.Tags,
 		Timestamp: timestamp,
 	}
+	if current.NoveltyEvaluated {
+		novel := current.Novel
+		entry.Novel = &novel
+	}
+	return entry
 }
 
 // shape produces the URL, headers, and body for the configured provider.

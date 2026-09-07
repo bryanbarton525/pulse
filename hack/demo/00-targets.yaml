@@ -151,4 +151,8 @@ spec:
 apiVersion: v1
 kind: Service
 metadata: {name: orders-grpc, namespace: shop}
-spec: {selector: {app: orders-grpc}, ports: [{port: 50051, targetPort: grpc}]}
+spec:
+  selector: {app: orders-grpc}
+  ports:
+    - {name: grpc, port: 50051, targetPort: grpc}
+    - {name: control, port: 8080, targetPort: health}

@@ -20,14 +20,14 @@ data:
         if "bodyDrift" in text:
             assessment = "A passing catalogue response changed semantics after deployment."
             evidence = "The status stayed 200 while the Potion drift score crossed its configured threshold."
-            steps = "Compare the blue and green catalogue payloads, then inspect the deployment revision."
+            steps = "Compare the expected and observed catalogue payloads, then inspect the service release or configuration."
         elif "shop/similar-a" in text or "shop/similar-b" in text:
             assessment = "Two independent canaries reported the same failure shape without a declared dependency."
             evidence = "MiniLM similarity exceeded the configured threshold and is recorded as the merge reason."
             steps = "Compare mergeEvidence with the declared topology and inspect the shared target."
         elif "shop/unrelated" in text:
-            assessment = "The control endpoint violated its content contract independently of the catalogue outage."
-            evidence = "Its assertion failure has no declared dependency and was placed in a separate incident."
+            assessment = "The control endpoint violated its configured content contract."
+            evidence = "HTTP stayed successful, but the response omitted the required healthy-control marker."
             steps = "Inspect the unrelated deployment and verify its expected response marker."
         elif "shop/mcp-tools" in text:
             assessment = "The MCP server is reachable but no longer advertises a required tool."
@@ -36,7 +36,7 @@ data:
         elif "shop/orders" in text:
             assessment = "The orders gRPC service reports NOT_SERVING through the standard health protocol."
             evidence = "Transport succeeded but grpc.health.v1 returned a non-serving status."
-            steps = "Inspect orders readiness and its most recent rollout."
+            steps = "Inspect orders readiness and the server's gRPC health registration."
         elif "shop/login-journey" in text:
             assessment = "The login journey reached the session step but its response failed the contract."
             evidence = "The first step passed and the session response omitted the authenticated marker."
@@ -44,9 +44,9 @@ data:
         elif "shop/no-content" in text:
             assessment = "The no-content health endpoint returned the wrong HTTP contract."
             evidence = "Pulse expected 204 and observed a response body with status 200."
-            steps = "Inspect the health handler and recent catalogue rollout."
+            steps = "Inspect the health handler and the configuration controlling its response contract."
         elif "latencyShift" in text:
-            assessment = "The catalogue remains correct but is materially slower than its learned baseline."
+            assessment = "The monitored endpoint remains correct but is materially slower than its learned baseline."
             evidence = "Passing checks breached the configured latency z-score repeatedly."
             steps = "Compare request latency with the baseline and inspect saturation or downstream waits."
         else:

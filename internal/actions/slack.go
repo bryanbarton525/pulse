@@ -152,7 +152,7 @@ func (a *SlackAction) render(current *incident.Incident) (string, error) {
 		fmt.Fprintf(&builder, "Latency z-score: %.2f\n", current.RootCauseSignal().LatencyZScore)
 	}
 
-	if !current.Novel {
+	if current.NoveltyEvaluated && !current.Novel {
 		builder.WriteString("_This failure shape has been seen before._\n")
 	}
 

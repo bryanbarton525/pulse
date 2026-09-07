@@ -104,6 +104,7 @@ func TestDispatcherSkipsLLMForKnownFailureShape(t *testing.T) {
 	current.Policy = policyApp
 	current.Trigger = incident.TriggerFailureCorrelation
 	current.Novel = false
+	current.NoveltyEvaluated = true
 	dispatcher.mu.Lock()
 	dispatcher.probes[current.RootCause] = proberunner.Probe{
 		Name: current.RootCause,

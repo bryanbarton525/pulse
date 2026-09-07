@@ -133,17 +133,38 @@ func IsCertManagerCRDsInstalled() bool {
 	return false
 }
 
-// LoadImageToKindClusterWithName loads a local docker image to the kind cluster
+// LoadImageToKindClusterWithName loads a local container image to the kind cluster.
 func LoadImageToKindClusterWithName(name string) error {
 	cluster := defaultKindCluster
 	if v, ok := os.LookupEnv("KIND_CLUSTER"); ok {
 		cluster = v
 	}
-	kindOptions := []string{"load", "docker-image", name, "--name", cluster}
 	kindBinary := defaultKindBinary
 	if v, ok := os.LookupEnv("KIND"); ok {
 		kindBinary = v
 	}
+
+	if os.Getenv("CONTAINER_TOOL") == "podman" {
+		archive, err := os.CreateTemp("", "pulse-e2e-image-*.tar")
+		if err != nil {
+			return fmt.Errorf("create temporary image archive: %w", err)
+		}
+		archivePath := archive.Name()
+		if err := archive.Close(); err != nil {
+			return fmt.Errorf("close temporary image archive: %w", err)
+		}
+		defer func() { _ = os.Remove(archivePath) }()
+
+		cmd := exec.Command("podman", "save", "--format", "docker-archive", "-o", archivePath, name)
+		if _, err := Run(cmd); err != nil {
+			return fmt.Errorf("save Podman image archive: %w", err)
+		}
+		cmd = exec.Command(kindBinary, "load", "image-archive", archivePath, "--name", cluster)
+		_, err = Run(cmd)
+		return err
+	}
+
+	kindOptions := []string{"load", "docker-image", name, "--name", cluster}
 	cmd := exec.Command(kindBinary, kindOptions...)
 	_, err := Run(cmd)
 	return err

@@ -26,9 +26,14 @@ The repository already documents this as the supported end-to-end path:
 
 ```bash
 make test-e2e
+# Podman users:
+make test-e2e CONTAINER_TOOL=podman
 ```
 
-Use an isolated Kind cluster rather than a shared development cluster.
+The target creates the dedicated `pulse-test-e2e` Kind cluster, builds and loads
+the manager image with the selected container tool, and removes the cluster even
+when the suite fails. Use this isolated cluster rather than a shared development
+cluster.
 
 ## Manual Cluster Validation
 

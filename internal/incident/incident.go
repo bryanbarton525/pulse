@@ -73,7 +73,8 @@ type Incident struct {
 
 	// Novel reports that this failure shape has not been seen before. Known
 	// shapes skip expensive escalation.
-	Novel bool `json:"novel"`
+	Novel            bool `json:"novel"`
+	NoveltyEvaluated bool `json:"noveltyEvaluated"`
 
 	OpenedAt  time.Time `json:"openedAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -97,6 +98,12 @@ type Incident struct {
 	// deliberately internal: callers need the evidence snapshot, while the
 	// engine needs a race-proof generation token around slow model/action work.
 	revision uint64
+
+	// Dispatch state is tracked per trigger. Correlated observations may arrive
+	// while novelty embedding or actions are in flight; they may enrich the live
+	// incident but must not start a second action chain for the same trigger.
+	dispatchingTrigger string
+	dispatchedTrigger  string
 }
 
 // ProbeNames lists every member probe, sorted.
