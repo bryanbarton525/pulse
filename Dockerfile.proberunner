@@ -4,7 +4,7 @@
 # enabled. That is the whole point of the two-tier embedding split: the binary
 # that scales to N replicas runs static Model2Vec embeddings, which are a token
 # lookup and a mean — pure Go, no ONNX Runtime, no libc.
-FROM golang:1.26 AS builder
+FROM docker.io/library/golang:1.26 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
