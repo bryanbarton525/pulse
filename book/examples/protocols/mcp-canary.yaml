@@ -1,0 +1,19 @@
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata:
+  name: mcp-tools
+  namespace: book-shop
+spec:
+  url: http://mcp.book-shop.svc:8080/mcp
+  interval: 10
+  expectedStatus: 200
+  mcp:
+    protocolVersion: "2025-11-25"
+    clientName: pulse
+    clientVersion: "0.1.0"
+    requireToolsCapability: true
+    minToolCount: 1
+    requiredTools:
+      - health.check
+  outputs:
+    - type: prometheus

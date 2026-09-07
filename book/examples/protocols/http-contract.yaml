@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: catalogue-auth
+  namespace: book-shop
+type: Opaque
+stringData:
+  token: book-demo-token
+---
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata:
+  name: catalogue-contract
+  namespace: book-shop
+spec:
+  url: http://catalogue.book-shop.svc:8080/
+  method: GET
+  headers:
+    X-Pulse-Course: http-contracts
+  auth:
+    type: bearer
+    bearer:
+      tokenSecretRef:
+        name: catalogue-auth
+        key: token
+  interval: 10
+  expectedStatus: 200
+  containsText: items
+  outputs:
+    - type: prometheus
