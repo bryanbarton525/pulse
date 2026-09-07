@@ -2,10 +2,22 @@ name: Book build
 
 on:
   pull_request:
-    paths: ['book/**', 'book.toml', 'docs/**', '.github/workflows/docs.yml']
+    paths:
+      - 'book/**'
+      - 'book.toml'
+      - 'docs/**'
+      - 'README.md'
+      - 'DEBUG_GUIDE.md'
+      - '.github/workflows/docs.yml'
   push:
     branches: [main, feat/model-intelligence]
-    paths: ['book/**', 'book.toml', 'docs/**', '.github/workflows/docs.yml']
+    paths:
+      - 'book/**'
+      - 'book.toml'
+      - 'docs/**'
+      - 'README.md'
+      - 'DEBUG_GUIDE.md'
+      - '.github/workflows/docs.yml'
   workflow_dispatch:
 
 permissions:
