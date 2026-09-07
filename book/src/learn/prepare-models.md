@@ -111,7 +111,30 @@ go test ./internal/embed -run 'TestRealPotion' -count=1 -v
 
 The output must show the real tests running and passing. A `SKIP` result means the files were not found and is not model validation. These tests establish a 512-dimensional Potion space, zero distance for identical bodies, semantic ordering, and separation of a maintenance page from a normal response at the default drift threshold.
 
-Do not claim MiniLM runtime validation yet. Its Go backend is selected with the `onnx` build tag and requires a compatible `libonnxruntime.so`; the incident-engine image chapter will build that native combination and run the tagged tests. Building without the tag deliberately returns an unavailable-backend error.
+## Prove the cold-path model on Linux
+
+MiniLM's Go backend is selected with the `onnx` build tag and requires a compatible native ONNX Runtime. The incident-engine image installs version 1.22.0 because it implements the API expected by the pinned Go wrapper. On a Linux `x86_64` or `aarch64` host, download the matching runtime into a temporary directory:
+
+```sh
+case "$(uname -m)" in
+  x86_64) ORT_ARCH=x64 ;;
+  aarch64|arm64) ORT_ARCH=aarch64 ;;
+  *) echo "No documented ONNX Runtime build for this architecture" >&2; exit 1 ;;
+esac
+mkdir -p /tmp/pulse-onnxruntime-1.22.0
+curl --fail --location \
+  https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-linux-${ORT_ARCH}-1.22.0.tgz |
+  tar -xz -C /tmp/pulse-onnxruntime-1.22.0 --strip-components=1
+```
+
+Run only the tagged real-model tests:
+
+```sh
+ONNXRUNTIME_SHARED_LIBRARY_PATH=/tmp/pulse-onnxruntime-1.22.0/lib/libonnxruntime.so \
+  go test -tags onnx ./internal/embed -run 'TestRealONNX' -count=1 -v
+```
+
+Both tests must run rather than skip. They establish a 384-dimensional MiniLM space, place related network failures closer than unrelated text, and compare the failure shapes used by the demo. This host test proves the pinned graph and native runtime work together; it does not prove that the incident-engine container has been built, loaded, or deployed. On another host OS or unsupported architecture, defer this evidence to the container image chapter instead of substituting a skipped test.
 
 Keep the artifacts for the image chapter. They are ignored by Git, but they consume local disk. To reset only model state:
 
