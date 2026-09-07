@@ -12,6 +12,22 @@ The incident engine is deployed only when a canary uses intelligence. The contro
 
 ## Follow a configuration change
 
+```mermaid
+flowchart TD
+    API[Canaries and policy in Kubernetes API] -->|desired configuration| Controller[Controller manager]
+    Controller -->|reconciles config and workloads| Runner[Probe runner shards]
+    Controller -->|reconciles when intelligence enabled| Engine[Incident engine]
+    Runner -->|protocol requests| Target[Monitored application]
+    Target -->|response| Runner
+    Runner -->|observations and result snapshots| Engine
+    Engine -->|policy actions| Sink[Investigation and notification endpoints]
+    Runner -->|live results without engine| Controller
+    Engine -->|aggregated results and incidents| Controller
+    Controller -->|meaningful status changes| API
+```
+
+The controller owns Kubernetes updates. Runners execute requests; the engine aggregates their evidence. Both result paths end at the status syncer, which projects the applicable live view into the API.
+
 You submit a canary to the Kubernetes API. Schema validation checks its structure. The controller lists the desired probes and policies and reconciles shared ConfigMaps, authentication configuration, workloads, and Services. Runners reload configuration and execute checks at their configured intervals. A background status syncer reads live results and incidents and updates the custom resource when meaningful fields change.
 
 This is asynchronous. A successful `kubectl apply` means Kubernetes accepted the object, not that the target has already been checked. After changing an assertion, inspect a result that actually evaluated the new assertion. An old healthy message is not proof that your new configuration passed.
@@ -26,6 +42,27 @@ This is asynchronous. A successful `kubectl apply` means Kubernetes accepted the
 Potion uses 512-dimensional static embeddings in the runner. MiniLM uses 384-dimensional transformer embeddings through ONNX Runtime in the engine. Their coordinates have different meanings; comparing vectors across these spaces is invalid even if their dimensions were equal.
 
 ## State and freshness
+
+```mermaid
+sequenceDiagram
+    participant User as Engineer
+    participant API as Kubernetes API
+    participant Controller as Controller manager
+    participant Runner as Probe runner
+    participant Engine as Incident engine
+    User->>API: Apply canary and policy
+    API-->>Controller: Resource change
+    Controller->>API: Reconcile config and workloads
+    API-->>Runner: Mounted config update
+    Runner->>Runner: Reload, execute checks, update detectors
+    Runner->>Engine: Ship observations and result snapshots
+    Engine->>Engine: Group, rank root, evaluate novelty, dispatch
+    Controller->>Engine: Read results and incidents
+    Engine-->>Controller: Aggregated evidence
+    Controller->>API: Update changed status fields
+```
+
+The sequence shows an intelligence-enabled installation. Without an engine, the controller collects results from runners. Configuration propagation and status projection are asynchronous; intervals and warmup make each checkpoint necessary.
 
 Runner restart loses drift and latency baselines. Engine restart loses in-memory incidents, novelty clusters, aggregated history, and proposed topology. These components currently do not provide durable highly available model state.
 

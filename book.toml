@@ -12,6 +12,7 @@ default-theme = "light"
 preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/bryanbarton525/pulse"
 site-url = "/book/"
+additional-js = ["book/src/vendor/mermaid.min.js", "book/src/diagrams.js"]
 
 [output.html.fold]
 enable = true

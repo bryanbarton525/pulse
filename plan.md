@@ -6,6 +6,12 @@ Status: implementation started. Planning PR #3 merged into `feat/model-intellige
 
 Active draft PR: [#4 — implement Pulse Book and manual learning course](https://github.com/bryanbarton525/pulse/pull/4). First implementation commit: `2ad32a3`.
 
+Second increment: added Mermaid 11.17.2 with npm lockfile and locally generated assets, component and sequence diagrams, CRD/journey reference includes, and a generated-HTML link/fragment checker wired into CI. Updated stale development prerequisites and scaffolding guidance. `npm install` reported zero vulnerabilities; mdBook build and all local links/assets/fragments across 12 HTML pages passed. Browser rendering and theme switching remain unverified. Started a fresh `pulse-book` Kind cluster via the manual chapter; creation reached Ready, but final command output needs collecting before marking the chapter validated.
+
+Pre-commit recovery: generated `graphify-out/graph.json` and `graph.html` were accidentally staged and exceeded the large-file hook limit. Exclude local graph output and `cmd/homelab.code-workspace` from commits; preserve both on disk. Generated Mermaid assets remain ignored and are reconstructed from the lockfile during builds.
+
+Latest verification: all four pre-commit hooks passed after removing local generated files from staging. Collected the manual cluster run: node Ready, no preinstalled CRDs, and the newly added bounded CoreDNS rollout check passed. `pulse-book` remains available for the manual installation chapters; `pulse-demo` is a separate existing cluster. Kind changed the current context, so continue using explicit contexts. Rebuilt Mermaid assets and the book; all local links/fragments/assets across 12 HTML pages passed again.
+
 Completed in the first implementation increment:
 
 - Added `book.toml` with `/book/` site URL, chapter navigation, search through mdBook defaults, and light/dark themes; pinned mdBook 0.4.52.
@@ -20,13 +26,13 @@ Next agent: start with `git status`, this checkpoint, and the implementation PR.
 
 Immediate next work, in order:
 
-1. Resolve relative links in included operations/development pages and add an internal-link checker. Add accessible Mermaid support with bundled pinned assets, then replace the incomplete old architecture diagram with verified component and sequence diagrams.
+1. Internal links and bundled Mermaid assets are implemented. Verify diagram rendering and theme switching in a browser, then replace the incomplete legacy architecture diagram with the verified book diagrams.
 2. Validate desktop/mobile rendering and `/book/` nested-path behavior. Verify the CI preview build on the PR; add release-asset integrity checking before production publication.
-3. Execute the environment chapter from a clean `pulse-book` cluster, record platform/version results, then write and execute the manual image/model/CRD/RBAC/controller installation chapters.
+3. Environment creation passed on Podman/Kind with Kubernetes v1.37.0 on arm64. Initial CoreDNS pods were still starting after node readiness, so the chapter now explicitly waits for CoreDNS. Complete that check, then write and execute the manual image/model/CRD/RBAC/controller installation chapters.
 4. Continue the chapter sequence below; update this checkpoint at each meaningful increment with files, test results, limitations, and next actions.
 5. Implement the homelab site and GitOps PR only after the content/build contract is usable. No homelab files or live cluster settings have been changed in this increment.
 
-Known gaps: book is intentionally incomplete; operations/development include links still need migration checks; no Mermaid rendering yet; no clean-cluster validation of new prose; no Docker execution; no production hosting implementation. Do not report the book or site complete based on a successful mdBook build.
+Known gaps: book is incomplete; Mermaid browser rendering/theme behavior and `/book/` preview still need verification; manual installation chapters remain to be written and executed; Docker is untested; production hosting is not implemented. Do not report the book or site complete based on a successful mdBook build.
 
 Target: `https://pulse.iambarton.com/book/`.
 

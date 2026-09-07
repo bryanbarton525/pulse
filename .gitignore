@@ -48,3 +48,9 @@ hack/models/**
 
 # Rendered documentation
 /book/build/
+/book/node_modules/
+/book/src/vendor/
+
+# Local codebase analysis and editor workspace
+/graphify-out/
+/cmd/homelab.code-workspace

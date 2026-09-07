@@ -16,6 +16,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: book/package-lock.json
+      - name: Prepare bundled diagrams
+        run: npm ci --prefix book --ignore-scripts && npm run --prefix book assets
       - name: Install pinned mdBook
         env:
           MDBOOK_VERSION: '0.4.52'
@@ -27,7 +34,7 @@ jobs:
           tar -xzf "$RUNNER_TEMP/mdbook.tar.gz" -C "$RUNNER_TEMP/mdbook-bin"
           echo "$RUNNER_TEMP/mdbook-bin" >> "$GITHUB_PATH"
       - name: Build book
-        run: mdbook build
+        run: mdbook build && python3 book/check-links.py
       - name: Upload preview artifact
         uses: actions/upload-artifact@v4
         with:

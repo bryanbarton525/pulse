@@ -11,5 +11,7 @@
 
 - [Operations](operations.md)
 - [Development](development.md)
+- [CRD design](crd-design.md)
+- [HTTP journeys](http-journey-canary.md)
 
 [Build and contribute to this book](book-development.md)

@@ -50,6 +50,7 @@ If `pulse-book` already exists, inspect whether it is a laboratory you intend to
 ```sh
 kind create cluster --name pulse-book --config pulse-book-kind.yaml --wait 120s
 kubectl --context kind-pulse-book wait --for=condition=Ready node --all --timeout=120s
+kubectl --context kind-pulse-book rollout status deployment/coredns -n kube-system --timeout=120s
 kubectl --context kind-pulse-book get nodes -o wide
 kubectl --context kind-pulse-book get pods -n kube-system
 ```
