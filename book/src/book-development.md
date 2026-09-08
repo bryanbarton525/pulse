@@ -23,7 +23,7 @@ The CI build verifies the SHA-256 digest of the pinned mdBook release before ext
 sha256sum --check pulse-book.tar.gz.sha256
 ```
 
-The eventual production application lives in `homelab/apps/pulse_site/` and serves the book at `/book/`. This local build does not publish the site. Mermaid is bundled locally; production routing and hosting validation remain tracked in `plan.md`.
+The production docs hub lives in `homelab/apps/docs_site/` and serves this book at `https://docs.iambarton.com/pulse/`. This local build does not publish the site. Mermaid is bundled locally; production routing and hosting validation remain tracked in `plan.md`.
 
 Add chapters to `book/src/SUMMARY.md` only when their content is useful. Keep original operations and development documents canonical while their book pages include them. Their linked CRD and journey references are included too; run the link checker after adding references. Do not duplicate them into independently edited copies.
 

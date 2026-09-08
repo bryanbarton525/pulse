@@ -10,7 +10,7 @@ on:
       - 'DEBUG_GUIDE.md'
       - '.github/workflows/docs.yml'
   push:
-    branches: [main, feat/model-intelligence]
+    branches: [main, feat/model-intelligence, codex/pulse-book]
     paths:
       - 'book/**'
       - 'book.toml'

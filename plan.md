@@ -12,7 +12,7 @@ Review pass after the completed course: fixed chapter order, stale contributor s
 
 The complete manual course is now present and connected: deterministic HTTP, 204, journey, MCP and gRPC chapters; intelligence installation, policy, Potion drift, latency, topology/similarity incidents, novelty, actions, degraded models/results, sharding, recovery, a contributor exercise, and an experiment matrix. Existing architecture, reconciliation, scaling, operations, Helm, testing, development, CRD, and journey sources are included as canonical references. `README.md` links all three entry paths, and `DEBUG_GUIDE.md` is a preserved redirect instead of a diverging copy.
 
-The generated book has 36 pages. mdBook 0.4.52 build and all local links/fragments pass. Browser verification passed sidebar navigation, nested `/book/` routes, `failureNovelty` search, previous/next keyboard navigation, diagrams on two pages in Light and Navy themes, and the 400px incidents layout. No Mermaid render error was set; only the known benign highlight.js Mermaid warning appeared.
+The generated book has 36 pages. mdBook 0.4.52 build and all local links/fragments pass. Browser verification passed sidebar navigation, nested `/pulse/` routes (formerly `/book/`), `failureNovelty` search, previous/next keyboard navigation, diagrams on two pages in Light and Navy themes, and the 400px incidents layout. No Mermaid render error was set; only the known benign highlight.js Mermaid warning appeared.
 
 Model preparation remains reproducible: pinned Potion/MiniLM revisions and four source hashes, 512-dimensional/63,091-row Potion conversion, real Potion tests, and tagged MiniLM ONNX tests with ONNX Runtime 1.22.0. All four Podman images now build with fully qualified base images. Container smoke validation loaded the 512-dimensional Potion model in the runner and MiniLM in the native incident engine. A passing 200 response produced measured Potion distance `0.15828632906491535`, an observed `bodyDrift` incident, and exactly one successful metric, LLM-fixture, Slack, and observability action. The fixture records showed the deterministic investigation, Slack payload, and Datadog payload; no real credentials were used.
 
@@ -22,9 +22,9 @@ The contributor exercise is implemented rather than illustrative: `HttpCanary.sp
 
 Earlier clean `kind-pulse-book` evidence remains valid for Podman/Kind on arm64: controller/runner/target install, CRDs, first canary healthy/failure/recovery. This cloud machine cannot execute the new clean-cluster prose order: nested Kind reaches kubeadm but cannot bootstrap because the parent container lacks required host capabilities. Docker is not installed, so Docker portability remains untested here.
 
-Production publication is definitively blocked from this run. The authenticated GitHub principal cannot resolve `bryanbarton525/homelab`, and `pulse.iambarton.com` currently has no resolvable DNS record from this environment. No site, DNS, Gateway, Argo CD, or production mutation was attempted without repository/infrastructure access. Acceptance still requires a homelab-authorized run to implement the site/GitOps changes and verify the live HTTPS paths.
+Publication target is now the shared docs hub at `https://docs.iambarton.com/pulse/` (not `pulse.iambarton.com/book/`). Homelab application path is `apps/docs_site/` with Argo Application `docs-site`. Live HTTPS verification still requires a control-plane kubeconfig on omarchy (this host is a k3s agent with Kind contexts only).
 
-Branch: `codex/pulse-book`; continue pushing to draft PR #4 with base `feat/model-intelligence`. Cursor bootstrap is `npm ci --prefix book --ignore-scripts`, `npm run --prefix book assets`, mdBook 0.4.52, and `python3 book/check-links.py`. Serve `book/build` beneath `/book/`. Use explicit Kubernetes contexts and do not represent the unavailable Kind/Docker/production gates as passed.
+Branch: `cursor/docs-hub-pulse-319b` (docs hub path retarget). Cursor bootstrap is `npm ci --prefix book --ignore-scripts`, `npm run --prefix book assets`, mdBook 0.4.52, and `python3 book/check-links.py`. Serve `book/build` beneath `/pulse/`. Use explicit Kubernetes contexts and do not represent unavailable Kind/Docker/production gates as passed.
 
 ### Completed foundation and validation
 
@@ -36,7 +36,7 @@ All four pre-commit hooks passed after removing local generated files from stagi
 
 Completed in the first implementation increment:
 
-- Added `book.toml` with `/book/` site URL, chapter navigation, search through mdBook defaults, and light/dark themes; pinned mdBook 0.4.52.
+- Added `book.toml` with `/pulse/` site URL (retargeted from `/book/`), chapter navigation, search through mdBook defaults, and light/dark themes; pinned mdBook 0.4.52.
 - Added a substantive component/ownership overview and manual isolated Kind environment chapter. Neither uses Make or demo orchestration.
 - Added introduction, book contributor instructions, and includes of canonical operations/development pages; unfinished course chapters are not listed as completed content.
 - Added a CI book build and downloadable preview artifact. This workflow does not publish the production site.
@@ -50,14 +50,14 @@ Remaining work requires an environment with the missing external capabilities:
 
 1. Re-run the full prose order on a fresh privileged Kind host, including the new engine, action, sharding, restart, stale-result, and exact cleanup commands. Save per-chapter evidence rather than substituting the maintainer harness.
 2. Execute the separate Docker path. Current evidence covers Podman image builds and local container networking only.
-3. Grant this agent or a successor read/write access to `bryanbarton525/homelab` and the applicable DNS/Gateway/Argo CD environment. Inspect its current conventions, implement the pinned site and GitOps resources, open the linked PR, and verify `https://pulse.iambarton.com/book/`.
+3. Finish homelab `docs_site` GitOps: seal `ghcr-pull-secret` for namespace `docs-site`, merge control-plane kubeconfig on omarchy, sync Argo, and verify `https://docs.iambarton.com/pulse/`.
 4. Resolve any authoritative CI failures and retain the reproducible archive checksum produced by the book workflow.
 
-Known gaps are therefore deployment/access gates, not missing book chapters: privileged clean-cluster execution, Docker portability, and production publication. Do not report the production site complete based on the successful local build or container-level runtime evidence.
+Known gaps are therefore deployment/access gates, not missing book chapters: privileged clean-cluster execution where still needed, and live docs-hub publication (kubeconfig + sealed pull secret). Do not report the production site complete based on the successful local build or container-level runtime evidence.
 
-Target: `https://pulse.iambarton.com/book/`.
+Target: `https://docs.iambarton.com/pulse/`.
 
-Hosting repository: [bryanbarton525/homelab](https://github.com/bryanbarton525/homelab/tree/main/apps). The Pulse site application belongs at `homelab/apps/pulse_site/`; deployment resources follow that repository's separate `clusters/` convention. Documentation stays alongside Pulse code, and the site consumes a pinned documentation revision to avoid divergent copies.
+Hosting repository: [bryanbarton525/homelab](https://github.com/bryanbarton525/homelab/tree/main/apps). The shared docs hub belongs at `homelab/apps/docs_site/`; deployment resources follow that repository's separate `clusters/` convention. Documentation stays alongside Pulse code, and the site consumes a pinned Pulse documentation revision to avoid divergent copies.
 
 Baseline: `e786e52` on `feat/model-intelligence`, containing the validated demo and E2E fixes. This planning PR is stacked on that branch; retarget it to `main` after the parent PR merges, preserving a documentation-only diff.
 
@@ -102,18 +102,18 @@ book/examples/
 The layout above is in the Pulse repository and owns book content, rendering, and validation. The site application and deployment live in homelab:
 
 ```text
-apps/pulse_site/                    # Dockerfile, static server configuration, pinned book source, runbook
-.github/workflows/pulse-site-build.yml
-clusters/namespace-pulse-site/      # Kustomize deployment, Service, routing, TLS configuration
-clusters/argocd/pulse-site.yaml     # Argo CD Application
+apps/docs_site/                     # Dockerfile, nginx, hub index, /pulse/ book, /prism/ stub, runbook
+.github/workflows/docs-site-build.yml
+clusters/namespace-docs-site/       # Kustomize deployment, Service, HTTPRoute on shared gateway
+clusters/argocd/docs-site.yaml      # Argo CD Application
 ```
 
-These are proposed new paths following the existing `apps/iambarton_site`, image-build workflow, namespace manifests, and Argo CD Application pattern. Keep application source under `apps/` and cluster configuration under `clusters/`.
+These follow the existing `apps/iambarton_site`, image-build workflow, namespace manifests, and Argo CD Application pattern. Keep application source under `apps/` and cluster configuration under `clusters/`.
 
 - Use a collapsible chapter sidebar, previous/next navigation, local search, copyable code blocks, deep links, light/dark themes, and readable mobile layouts.
 - Preserve Pulse branding while adopting the restrained reading layout of the Kubebuilder Book. Do not copy its logos or project-specific content.
 - Bundle Mermaid rendering assets with the site; diagrams must remain readable in both themes and have a prose equivalent.
-- Configure and test all navigation, images, fonts, search assets, and diagrams under `/book/`, including direct navigation to nested chapters.
+- Configure and test all navigation, images, fonts, search assets, and diagrams under `/pulse/`, including direct navigation to nested chapters.
 - Provide a plain-command local preview workflow and a reproducible static build. Avoid requiring Kubernetes just to edit prose.
 - Show source/edit links, the documented release or commit, and a clear distinction between stable release documentation and development changes.
 
@@ -185,17 +185,17 @@ Explain the demo control endpoint as a test fixture, including its scope and acc
 - Label arrows by payload and direction, including trust boundaries and data retention. Distinguish retained local bodies, normalized failure text, embeddings, observations, configuration, and status. Verify claims about what crosses a process boundary against implementation.
 - Link the learning path to contributor guidance, code locations, tests, and the operations troubleshooting sections.
 
-## 6. Publish at pulse.iambarton.com/book/
+## 6. Publish at docs.iambarton.com/pulse/
 
-1. Implement the site at `homelab/apps/pulse_site/`. Follow the inspected homelab pattern: GitHub Actions builds application images into GHCR, Argo CD reconciles a Kustomize directory under `clusters/`, and Gateway API HTTPRoutes expose the site. GitHub Pages is not the deployment target.
-2. Keep canonical book sources in Pulse. Pin a Pulse commit or verified artifact in the homelab site build; record it in the image metadata and book. Define an explicit promotion PR that updates this pin and the deployed image digest together. Do not fetch a moving branch at container startup.
-3. Serve the generated static content beneath `/book/` in the site container. Test `/book` redirection and nested routes without stripping the prefix incorrectly. Preserve any existing content at the hostname root.
-4. Add `homelab/.github/workflows/pulse-site-build.yml` with validation and preview checks for PRs and GHCR publication from merged site changes. Use immutable image references for deployment. Pulse's docs workflow validates/builds the book; homelab owns site packaging and deployment.
-5. Add the namespace, Deployment, Service, readiness/liveness probes, resource settings, and Kustomize configuration under `clusters/namespace-pulse-site/`, plus `clusters/argocd/pulse-site.yaml`. Check app-of-apps discovery and repository instructions before wiring it in; merging an automatically synced Argo CD Application can initiate a deployment.
-6. Inspect the actual gateway, certificate issuer, external-dns/Cloudflare configuration, and existing `pulse.iambarton.com` record before defining host routing and TLS. The inspected portal uses a Gateway API route and external-dns hostname annotation; reuse the applicable convention without copying portal-specific names or credentials. DNS configures the hostname, while the server/route handles `/book/`.
-7. Open linked Pulse and homelab PRs, documenting source revision, image digest, routing, and rollout order. Verify HTTPS, `/book` to `/book/` handling, nested chapter URLs, search, diagrams, old documentation links, and cache behavior. Roll back by reverting the pinned source/image deployment change through GitOps.
+1. Implement the shared docs hub at `homelab/apps/docs_site/`. Follow the inspected homelab pattern: GitHub Actions builds application images into GHCR, Argo CD reconciles a Kustomize directory under `clusters/`, and Gateway API HTTPRoutes expose the site on the existing `iambarton-site-gateway`. GitHub Pages is not the deployment target.
+2. Keep canonical book sources in Pulse. Pin a Pulse commit (`PULSE_REF`) in the homelab site build; record it in image labels and `/pulse/VERSION.txt`. Define an explicit promotion PR that updates this pin and the deployed image digest together. Do not fetch a moving branch at container startup.
+3. Serve the generated static content beneath `/pulse/` in the site container. Test `/pulse` redirection and nested routes without stripping the prefix incorrectly. Serve a minimal hub index at `/` and a stub at `/prism/` for future books.
+4. Add `homelab/.github/workflows/docs-site-build.yml` for GHCR publication. Pulse's docs workflow validates/builds the book; homelab owns site packaging and deployment.
+5. Add the namespace, Deployment, Service, readiness/liveness probes, resource settings, and Kustomize configuration under `clusters/namespace-docs-site/`, plus `clusters/argocd/docs-site.yaml`. App-of-apps picks up Applications from `clusters/argocd/`.
+6. Attach HTTPRoute host `docs.iambarton.com` to the shared gateway with ExternalDNS hostname annotation. Do not add the hostname to cloudflare-ddns `records:`. Reuse the `*.iambarton.com` certificate on the existing gateway.
+7. Open linked Pulse and homelab PRs, documenting source revision, image digest, routing, and rollout order. Verify HTTPS, `/pulse` to `/pulse/` handling, nested chapter URLs, search, diagrams, and cache behavior. Roll back by reverting the pinned source/image deployment change through GitOps.
 
-Acceptance requires the requested URL to serve the book. A local build or uploaded artifact alone is not publication.
+Acceptance requires `https://docs.iambarton.com/pulse/` to serve the book. A local build or uploaded artifact alone is not publication.
 
 ## 7. Verification and acceptance gates
 
@@ -225,7 +225,7 @@ The existing validation baseline includes ten demo scenarios, unit/envtest check
 3. Land the manual installation and deterministic canary chapters with recorded clean-cluster validation.
 4. Land model, incident, action, recovery, and contributor chapters with the experiment matrix and evidence.
 5. Migrate/refine operations, quick start, API reference, and architecture diagrams; preserve existing links.
-6. Add the site application in `homelab/apps/pulse_site/` and linked image-build/GitOps changes, configure the verified host, publish `/book/`, and verify the live site.
+6. Add the docs hub in `homelab/apps/docs_site/` and linked image-build/GitOps changes, configure `docs.iambarton.com`, publish `/pulse/`, and verify the live site.
 
 Do not mark a phase complete with placeholder chapters, omitted model prerequisites, untested copy/paste commands, or unavailable evidence represented as a successful result.
 
