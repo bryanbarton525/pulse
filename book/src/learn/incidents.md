@@ -88,12 +88,14 @@ cat <<'EOF' | kubectl --context kind-pulse-book create --raw \
   '/api/v1/namespaces/shop/services/http:unrelated:8080/proxy/__control' -f -
 {"behavior":"control-fail"}
 EOF
+# These fixture responses are 5xx during the outage. kubectl get --raw
+# exits nonzero on non-2xx; append || true if you are running under set -e.
 kubectl --context kind-pulse-book get --raw \
-  '/api/v1/namespaces/shop/services/http:catalogue:8080/proxy/'
+  '/api/v1/namespaces/shop/services/http:catalogue:8080/proxy/' || true
 kubectl --context kind-pulse-book get --raw \
-  '/api/v1/namespaces/shop/services/http:checkout:8080/proxy/'
+  '/api/v1/namespaces/shop/services/http:checkout:8080/proxy/' || true
 kubectl --context kind-pulse-book get --raw \
-  '/api/v1/namespaces/shop/services/http:unrelated:8080/proxy/'
+  '/api/v1/namespaces/shop/services/http:unrelated:8080/proxy/' || true
 ```
 
 Expect, subject to later verification, catalogue 529, checkout/search 503 because they call catalogue, and unrelated HTTP 200 with `degraded-control`. Wait and inspect:

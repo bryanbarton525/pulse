@@ -78,6 +78,13 @@ docker pull python:3.12-alpine
 kind load docker-image python:3.12-alpine --name pulse-book
 ```
 
+If `kind load docker-image` fails with `ctr: ... content digest ... not found`, Kind's `--all-platforms` import is choking on the image's attestation manifests. Import the saved archive without that flag:
+
+```sh
+docker save python:3.12-alpine | \
+  docker exec -i pulse-book-control-plane ctr --namespace=k8s.io images import -
+```
+
 Deploy the local recording sink:
 
 ```sh
