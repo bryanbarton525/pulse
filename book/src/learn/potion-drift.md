@@ -68,6 +68,8 @@ printf '%s' "$RESULT" | python3 -m json.tool
 
 The bounded loop must end with `driftState: ready` and at least five `driftSamples`. Do not use the CR's unchanged healthy timestamp as proof of fresh sampling; use the engine's live aggregate.
 
+A runner restart drops the in-memory centroid. The engine's `/results` snapshot can still say `ready` until a new observation arrives. If you just restarted the runner, wait until `driftState` becomes `warming` (or the sample count resets) before treating `ready` as a new healthy baseline. Mutating the fixture during warmup teaches the changed body as normal and will not raise `bodyDrift`.
+
 ## Introduce a green semantic change
 
 The fixture's `green` behavior changes two products into an empty list while retaining HTTP 200 and the word `items`.
