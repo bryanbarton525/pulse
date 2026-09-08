@@ -20,6 +20,8 @@ make demo-tour-paced
 make demo-lab
 ```
 
+If image builds time out fetching modules from `proxy.golang.org` while the host can reach that URL, retry with `DOCKER_BUILD_FLAGS=--network=host make demo-up`.
+
 Every demo command pins Kubernetes operations to `kind-pulse-demo` by default; set `DEMO_CLUSTER=name` to use another dedicated Kind cluster. The shorter local-controller path below uses your current kubeconfig and needs an explicit, laptop-reachable results URL for status syncing.
 
 ```bash

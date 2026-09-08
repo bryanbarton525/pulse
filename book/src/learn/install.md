@@ -14,7 +14,7 @@ podman build -f Dockerfile.proberunner -t localhost/pulse-probe-runner:book-v1 .
 podman build -f Dockerfile.demo-target -t localhost/pulse-demo-target:book-v1 .
 ```
 
-With Docker, execute the same three commands with `docker` instead of `podman`. Keep the explicit `localhost/` image names in both cases so the manifests do not change between providers. These are local image names, not a request to push to a registry.
+With Docker, execute the same three commands with `docker` instead of `podman`. Keep the explicit `localhost/` image names in both cases so the manifests do not change between providers. These are local image names, not a request to push to a registry. If `go mod download` times out reaching `proxy.golang.org` from BuildKit but works on the host, add `--network=host` to each `docker build` command.
 
 The runner Dockerfile copies the prepared Potion files. A deterministic canary does not require those weights, and no model is loaded until a policy enables body drift. Do not interpret this image build alone as model-load evidence; the intelligence installation chapter checks the runtime logs before any model experiment.
 

@@ -8,6 +8,12 @@ make demo-tour-paced
 make demo-lab
 ```
 
+If `make demo-up` fails while Docker BuildKit downloads Go modules (`dial tcp ... proxy.golang.org ... i/o timeout`) but the same URL works on the host, retry the image builds on the host network:
+
+```sh
+DOCKER_BUILD_FLAGS=--network=host make demo-up
+```
+
 The default Kubernetes context is `kind-pulse-demo`; override `DEMO_CLUSTER` only with another isolated lab name. The scenario driver verifies deterministic HTTP, journey, MCP, and gRPC failures plus Potion drift, latency, declared and model-only correlation, novelty replay, and action counts. It is a demonstration and maintainer harness, not a substitute for understanding the underlying resources.
 
 Inspect the live state between scenarios:

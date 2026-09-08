@@ -31,10 +31,10 @@ for path, page in pages.items():
         if url.scheme or url.netloc:
             continue
         target = unquote(url.path)
-        if target.startswith("/book/"):
-            dest = root / target.removeprefix("/book/")
+        if target.startswith("/pulse/"):
+            dest = root / target.removeprefix("/pulse/")
         elif target.startswith("/"):
-            errors.append(f"{path.name}: link escapes /book/: {link}")
+            errors.append(f"{path.name}: link escapes /pulse/: {link}")
             continue
         else:
             dest = path.parent / target if target else path
