@@ -36,6 +36,7 @@ type GrpcCanarySpec struct {
 
 	// Interval is the frequency in seconds to run the check.
 	// +kubebuilder:validation:Minimum=5
+	// +kubebuilder:validation:Maximum=3600
 	// +kubebuilder:default=30
 	// +optional
 	Interval int `json:"interval,omitempty"`
