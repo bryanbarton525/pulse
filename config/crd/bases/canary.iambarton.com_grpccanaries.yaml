@@ -81,6 +81,7 @@ spec:
               interval:
                 default: 30
                 description: Interval is the frequency in seconds to run the check.
+                maximum: 3600
                 minimum: 5
                 type: integer
               outputs:
