@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,11 +22,23 @@ func main() {
 	var configPath string
 	var authFilePath string
 	var listenAddr string
+	var incidentEngineURL string
+	var hotModelPath string
+	var hotVocabPath string
+	var embedCacheSize int
 	flag.StringVar(&configPath, "config", "/etc/pulse/probes.yaml",
 		"Path to the probe config file (mounted from ConfigMap).")
 	flag.StringVar(&authFilePath, "auth-file", "/etc/pulse-auth/auth.yaml",
 		"Path to the auth file (mounted from Secret).")
 	flag.StringVar(&listenAddr, "listen", ":9090", "Address to serve /metrics and /results on.")
+	flag.StringVar(&incidentEngineURL, "incident-engine", "",
+		"Base URL of the incident engine. Empty disables correlation and action dispatch.")
+	flag.StringVar(&hotModelPath, "hot-model", proberunner.DefaultHotModelPath,
+		"Path to the static embedding model used for body-drift scoring.")
+	flag.StringVar(&hotVocabPath, "hot-vocab", proberunner.DefaultHotVocabPath,
+		"Path to the vocabulary for the static embedding model.")
+	flag.IntVar(&embedCacheSize, "embed-cache-size", 4096,
+		"How many normalized response bodies to memoize. Most checks return an identical body every time.")
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -48,7 +62,19 @@ func main() {
 		logger.Error(err, "Failed to load probe auth store")
 		os.Exit(1)
 	}
-	logger.Info("Loaded probe config", "probeCount", len(config.Probes))
+	// ── Take this replica's share of the probes ──────────────
+	//
+	// Sharding is a stable hash of the probe name against the StatefulSet
+	// ordinal, so every replica reaches the same split from the same ConfigMap
+	// with no coordination. A single replica owns everything, which is the
+	// default and reproduces the original behavior exactly.
+	allConfig := config
+	ordinal, shards := proberunner.ShardFromEnvironment()
+	shardName := strconv.Itoa(ordinal)
+	config = proberunner.Shard(config, ordinal, shards)
+
+	logger.Info("Loaded probe config",
+		"probeCount", len(config.Probes), "shard", ordinal, "shards", shards)
 
 	// ── Set up Prometheus registry ───────────────────────────
 	//
@@ -65,6 +91,45 @@ func main() {
 	defer cancel()
 
 	runner := proberunner.NewRunner(logger, registry, *authStore)
+	internalToken := proberunner.NewInternalToken(
+		authStore.Values[proberunner.InternalAuthTokenKey])
+
+	// ── Attach the model-driven evaluator ────────────────────
+	//
+	// Built only when some probe actually opted in, so a cluster with no
+	// AnomalyPolicy never loads a model and behaves exactly as it did before
+	// this feature existed.
+	var shipper *proberunner.HTTPShipper
+	if incidentEngineURL != "" && anyProbeWantsIntelligence(config.Probes) {
+		shipper = proberunner.NewHTTPShipper(proberunner.ShipperOptions{
+			Endpoint:    strings.TrimRight(incidentEngineURL, "/") + "/observations",
+			Shard:       shardName,
+			Logger:      logger,
+			TokenSource: internalToken,
+		})
+
+		hotModels := &hotModelState{
+			modelPath: hotModelPath,
+			vocabPath: hotVocabPath,
+			cacheSize: embedCacheSize,
+		}
+		embedder := hotModels.reload(allConfig.Probes, logger)
+		defer hotModels.close()
+		intelligence := proberunner.NewIntelligence(
+			embedder, shipper, logger, proberunner.NewIntelligenceMetrics(registry))
+		runner.SetIntelligence(intelligence)
+
+		resultPusher := proberunner.NewResultPusher(
+			strings.TrimRight(incidentEngineURL, "/")+"/results",
+			shardName, runner, logger, 5*time.Second,
+		).UseTokenSource(internalToken)
+		go resultPusher.Run(ctx)
+
+		go watchConfigReload(ctx, configPath, authFilePath, runner, intelligence, hotModels, internalToken)
+	} else {
+		go watchConfigReload(ctx, configPath, authFilePath, runner, nil, nil, internalToken)
+	}
+
 	runner.Start(ctx, config)
 
 	// ── Start HTTP server ────────────────────────────────────
@@ -94,8 +159,6 @@ func main() {
 	// ConfigMap volume mounts use symlinks that get atomically swapped.
 	// fsnotify doesn't reliably detect symlink target changes across
 	// all platforms. Polling every 5s is simple and reliable.
-	go watchConfigReload(ctx, configPath, authFilePath, runner)
-
 	// ── Graceful shutdown ────────────────────────────────────
 	//
 	// Wait for SIGTERM (what Kubernetes sends) or SIGINT (Ctrl+C).
@@ -105,7 +168,16 @@ func main() {
 	sig := <-sigCh
 	logger.Info("Received shutdown signal", "signal", sig)
 
-	runner.Stop()
+	// Stop blocks until in-flight checks finish, so the shipper is still alive
+	// for anything they report on the way out.
+	drained := runner.Stop()
+	if !drained {
+		logger.Info("Some probes were still running at shutdown; " +
+			"stopping the observation shipper anyway")
+	}
+	if shipper != nil {
+		shipper.Stop()
+	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
@@ -125,7 +197,15 @@ func main() {
 // When the ConfigMap is updated, Kubernetes creates a new timestamped directory,
 // then atomically swaps the ..data symlink. The file's ModTime changes, which
 // we detect here.
-func watchConfigReload(ctx context.Context, configPath string, authFilePath string, runner *proberunner.Runner) {
+func watchConfigReload(
+	ctx context.Context,
+	configPath string,
+	authFilePath string,
+	runner *proberunner.Runner,
+	intelligence *proberunner.Intelligence,
+	hotModels *hotModelState,
+	internalToken *proberunner.InternalToken,
+) {
 	logger := ctrl.Log.WithName("proberunner")
 	var configModTime time.Time
 	var authModTime time.Time
@@ -172,10 +252,32 @@ func watchConfigReload(ctx context.Context, configPath string, authFilePath stri
 					logger.Error(err, "Failed to reload auth store — keeping current probes")
 					continue
 				}
+				internalToken.Set(newAuthStore.Values[proberunner.InternalAuthTokenKey])
+
+				if intelligence != nil && hotModels != nil {
+					if next, changed := hotModels.reloadIfChanged(newConfig.Probes, logger); changed {
+						if previous := intelligence.SetEmbedder(next); previous != nil && previous != next {
+							_ = previous.Close()
+						}
+					}
+				}
+
+				ordinal, shards := proberunner.ShardFromEnvironment()
+				newConfig = proberunner.Shard(newConfig, ordinal, shards)
 
 				runner.Reload(ctx, newConfig, *newAuthStore)
-				logger.Info("Config reloaded", "probeCount", len(newConfig.Probes))
+				logger.Info("Config reloaded", "probeCount", len(newConfig.Probes), "shard", ordinal)
 			}
 		}
 	}
+}
+
+// anyProbeWantsIntelligence reports whether this shard has any opted-in canary.
+func anyProbeWantsIntelligence(probes []proberunner.Probe) bool {
+	for _, probe := range probes {
+		if probe.Intelligence != nil {
+			return true
+		}
+	}
+	return false
 }

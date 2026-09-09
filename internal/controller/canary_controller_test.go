@@ -61,7 +61,7 @@ func TestBuildProbeConfigIncludesJourneyFields(t *testing.T) {
 				},
 			},
 		},
-	})
+	}, nil)
 
 	if len(config.Probes) != 1 {
 		t.Fatalf("buildProbeConfig() produced %d probes, want 1", len(config.Probes))
@@ -120,7 +120,7 @@ func TestPopulateProbeAuthResolvesBearerCredentials(t *testing.T) {
 		t.Fatalf("corev1.AddToScheme() error = %v", err)
 	}
 
-	reconciler := HttpCanaryReconciler{
+	reconciler := CanaryReconciler{
 		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "mcp-auth", Namespace: "default"},
 			Data:       map[string][]byte{"token": []byte("demo-token")},
@@ -144,7 +144,7 @@ func TestPopulateProbeAuthResolvesBearerCredentials(t *testing.T) {
 		},
 	}
 
-	config := buildProbeConfig([]canaryv1alpha1.HttpCanary{canary})
+	config := buildProbeConfig([]canaryv1alpha1.HttpCanary{canary}, nil)
 	authStore := proberunner.AuthStore{Values: map[string]string{}}
 	reconciler.populateProbeAuth(context.Background(), []canaryv1alpha1.HttpCanary{canary}, &config, &authStore)
 
@@ -170,7 +170,7 @@ func TestPopulateProbeAuthSetsConfigErrorWhenSecretIsMissing(t *testing.T) {
 		t.Fatalf("corev1.AddToScheme() error = %v", err)
 	}
 
-	reconciler := HttpCanaryReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+	reconciler := CanaryReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
 	canary := canaryv1alpha1.HttpCanary{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "sample-mcp"},
 		Spec: canaryv1alpha1.HttpCanarySpec{
@@ -188,7 +188,7 @@ func TestPopulateProbeAuthSetsConfigErrorWhenSecretIsMissing(t *testing.T) {
 		},
 	}
 
-	config := buildProbeConfig([]canaryv1alpha1.HttpCanary{canary})
+	config := buildProbeConfig([]canaryv1alpha1.HttpCanary{canary}, nil)
 	authStore := proberunner.AuthStore{Values: map[string]string{}}
 	reconciler.populateProbeAuth(context.Background(), []canaryv1alpha1.HttpCanary{canary}, &config, &authStore)
 

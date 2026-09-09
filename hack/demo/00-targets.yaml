@@ -1,0 +1,158 @@
+apiVersion: v1
+kind: Namespace
+metadata: {name: shop}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: catalogue, namespace: shop}
+spec:
+  replicas: 1
+  strategy: {type: RollingUpdate, rollingUpdate: {maxUnavailable: 0, maxSurge: 1}}
+  selector: {matchLabels: {app: catalogue}}
+  template:
+    metadata: {labels: {app: catalogue}}
+    spec:
+      containers:
+        - name: target
+          image: PULSE_DEMO_TARGET_IMAGE
+          imagePullPolicy: Never
+          args: ["--service=catalogue"]
+          env: [{name: DEMO_BEHAVIOR, value: healthy}]
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 1}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: catalogue, namespace: shop}
+spec: {selector: {app: catalogue}, ports: [{port: 8080, targetPort: http}]}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: checkout, namespace: shop}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: checkout}}
+  template:
+    metadata: {labels: {app: checkout}}
+    spec:
+      containers:
+        - name: target
+          image: PULSE_DEMO_TARGET_IMAGE
+          imagePullPolicy: Never
+          args: ["--service=downstream"]
+          env:
+            - {name: DEMO_BEHAVIOR, value: healthy}
+            - {name: CATALOGUE_URL, value: "http://catalogue.shop.svc:8080/"}
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 1}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: checkout, namespace: shop}
+spec: {selector: {app: checkout}, ports: [{port: 8080, targetPort: http}]}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: search, namespace: shop}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: search}}
+  template:
+    metadata: {labels: {app: search}}
+    spec:
+      containers:
+        - name: target
+          image: PULSE_DEMO_TARGET_IMAGE
+          imagePullPolicy: Never
+          args: ["--service=downstream"]
+          env:
+            - {name: DEMO_BEHAVIOR, value: healthy}
+            - {name: CATALOGUE_URL, value: "http://catalogue.shop.svc:8080/"}
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 1}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: search, namespace: shop}
+spec: {selector: {app: search}, ports: [{port: 8080, targetPort: http}]}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: unrelated, namespace: shop}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: unrelated}}
+  template:
+    metadata: {labels: {app: unrelated}}
+    spec:
+      containers:
+        - name: target
+          image: PULSE_DEMO_TARGET_IMAGE
+          imagePullPolicy: Never
+          args: ["--service=control"]
+          env: [{name: DEMO_BEHAVIOR, value: healthy}]
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 1}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: unrelated, namespace: shop}
+spec: {selector: {app: unrelated}, ports: [{port: 8080, targetPort: http}]}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: mcp, namespace: shop}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: mcp}}
+  template:
+    metadata: {labels: {app: mcp}}
+    spec:
+      containers:
+        - name: target
+          image: PULSE_DEMO_TARGET_IMAGE
+          imagePullPolicy: Never
+          args: ["--service=mcp"]
+          env: [{name: DEMO_BEHAVIOR, value: healthy}]
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 1}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: mcp, namespace: shop}
+spec: {selector: {app: mcp}, ports: [{port: 8080, targetPort: http}]}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: orders-grpc, namespace: shop}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: orders-grpc}}
+  template:
+    metadata: {labels: {app: orders-grpc}}
+    spec:
+      containers:
+        - name: target
+          image: PULSE_DEMO_TARGET_IMAGE
+          imagePullPolicy: Never
+          args: ["--service=grpc"]
+          env: [{name: DEMO_BEHAVIOR, value: healthy}]
+          ports:
+            - {name: grpc, containerPort: 50051}
+            - {name: health, containerPort: 8080}
+          readinessProbe: {httpGet: {path: /healthz, port: health}, periodSeconds: 1}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: orders-grpc, namespace: shop}
+spec:
+  selector: {app: orders-grpc}
+  ports:
+    - {name: grpc, port: 50051, targetPort: grpc}
+    - {name: control, port: 8080, targetPort: health}

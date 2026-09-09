@@ -62,6 +62,12 @@ spec:
               fieldPath: metadata.namespace
         - name: PULSE_PROBE_RUNNER_IMAGE
           value: "{{ .Values.manager.probeRunnerImage.repository }}:{{ .Values.manager.probeRunnerImage.tag }}"
+        - name: PULSE_INCIDENT_ENGINE_IMAGE
+          value: "{{ .Values.manager.incidentEngineImage.repository }}:{{ .Values.manager.incidentEngineImage.tag }}"
+        {{- if gt (int .Values.manager.probeRunnerShards) 1 }}
+        - name: PULSE_PROBE_RUNNER_SHARDS
+          value: {{ .Values.manager.probeRunnerShards | quote }}
+        {{- end }}
         {{- if .Values.manager.imagePullSecrets }}
         - name: PULSE_PROBE_RUNNER_IMAGE_PULL_SECRETS
           value: "{{- range $i, $secret := .Values.manager.imagePullSecrets }}{{- if $i }},{{ end }}{{ $secret.name }}{{- end }}"

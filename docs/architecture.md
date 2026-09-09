@@ -2,7 +2,7 @@
 
 ## Overview
 
-Pulse is a Kubernetes operator that lets developers define HTTP canary checks as custom resources. The operator follows a split-responsibility architecture where the **controller** manages infrastructure and the **probe runner** executes checks.
+Pulse is a Kubernetes operator that lets developers define HTTP, journey, MCP-over-HTTP, and gRPC canary checks as custom resources. The **controller** manages desired state, sharded **probe runners** execute checks and hot-path detection, and an optional **incident engine** performs cluster-wide correlation and actions.
 
 ## Components
 
@@ -14,15 +14,15 @@ Pulse is a Kubernetes operator that lets developers define HTTP canary checks as
 │  │ pulse-system namespace                                   │ │
 │  │                                                         │ │
 │  │  ┌───────────────────────┐   ┌────────────────────────┐ │ │
-│  │  │ Controller Manager    │   │ Probe Runner Deployment│ │ │
+│  │  │ Controller Manager    │   │ Probe Runner StatefulSet││ │
 │  │  │                       │   │                        │ │ │
-│  │  │ - HttpCanaryReconciler│   │ - Reads ConfigMap      │ │ │
-│  │  │ - StatusSyncer        │   │ - Executes HTTP checks │ │ │
+│  │  │ - CanaryReconciler    │   │ - Reads ConfigMap      │ │ │
+│  │  │ - StatusSyncer        │   │ - HTTP/MCP/gRPC checks │ │ │
 │  │  │                       │   │ - Serves /results      │ │ │
 │  │  │ Manages:              │   │ - Serves /metrics      │ │ │
 │  │  │  - ConfigMap          │──▶│                        │ │ │
-│  │  │  - Deployment         │   │                        │ │ │
-│  │  │  - Service            │   │                        │ │ │
+│  │  │  - StatefulSet        │   │ - Potion / latency     │ │ │
+│  │  │  - Services           │   │ - sharded by ordinal   │ │ │
 │  │  └───────────┬───────────┘   └───────────┬────────────┘ │ │
 │  │              │                           │              │ │
 │  │              │ polls /results            │              │ │
@@ -42,7 +42,7 @@ Pulse is a Kubernetes operator that lets developers define HTTP canary checks as
 2. API server validates it against the CRD's OpenAPI schema
 3. The informer notifies the controller; all events map to a single reconcile key
 4. `HttpCanaryReconciler` lists all CRs, builds a `ProbeConfig`, and writes it to a ConfigMap
-5. The reconciler ensures a probe runner Deployment and Service exist
+5. The reconciler ensures the probe runner StatefulSet and Services exist, plus the incident engine when intelligence is enabled
 6. The probe runner reads the ConfigMap (mounted as a volume), detects changes via file watcher
 7. The runner executes HTTP checks per probe on their configured interval
 8. `StatusSyncer` (a background Runnable) polls the runner's `/results` endpoint every 15s
@@ -60,23 +60,26 @@ The operator binary. Hosts the reconciler and status syncer within a controller-
 - Metrics endpoint
 - Graceful shutdown
 
-### HttpCanaryReconciler (`internal/controller/httpcanary_controller.go`)
+### CanaryReconciler (`internal/controller/canary_controller.go`)
 
-Triggered by HttpCanary CR changes. Manages three infrastructure resources:
+Triggered by canary and policy changes. Manages the shared runtime resources:
 
 | Resource | Name | Purpose |
 |----------|------|---------|
 | ConfigMap | `pulse-probe-config` | Probe configuration consumed by the runner |
-| Deployment | `pulse-probe-runner` | Runs the probe runner binary |
+| StatefulSet | `pulse-probe-runner` | Runs one or more stable, hash-sharded probe runners |
 | Service | `pulse-probe-runner` | Stable DNS for the controller to reach `/results` |
+| Headless Service | `pulse-probe-runner-headless` | Lets status collection address every runner ordinal |
+| Deployment | `pulse-incident-engine` | Optional cluster-wide correlation, novelty, and actions |
+| Service | `pulse-incident-engine` | Aggregated results and incident APIs |
 
 All CR events are mapped to a single work queue key via `EnqueueRequestsFromMapFunc`. This ensures one reconcile per batch of changes regardless of how many CRs changed.
 
 ### StatusSyncer (`internal/controller/status_syncer.go`)
 
 A `manager.Runnable` that runs as a background goroutine. On a 15-second interval:
-1. Calls `GET /results` on the probe runner Service
-2. Lists all HttpCanary CRs
+1. Fetches a complete `GET /results` view from the engine or every runner shard
+2. Lists all HttpCanary and GrpcCanary CRs
 3. Updates `.status` only for CRs whose state changed
 
 This separation avoids the N-squared scaling problem of polling inside Reconcile with RequeueAfter.
@@ -103,7 +106,7 @@ A standalone binary deployed by the controller. Responsibilities:
 
 ## Namespace Model
 
-- HttpCanary CRs can live in **any namespace**
-- Infrastructure resources (ConfigMap, Deployment, Service) live in the **operator namespace** (`pulse-system`)
+- HttpCanary and GrpcCanary CRs can live in **any namespace**
+- Infrastructure resources (ConfigMap, Secret, StatefulSet, Deployments, Services) live in the **operator namespace** (`pulse-system`)
 - The controller lists CRs cluster-wide (requires ClusterRole, not namespaced Role)
 - OwnerReferences are not used across namespaces (Kubernetes limitation)

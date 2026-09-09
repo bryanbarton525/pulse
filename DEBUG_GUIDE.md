@@ -46,12 +46,14 @@ This runs all unit tests (excluding e2e tests) with an embedded Kubernetes API s
 #### E2E Tests with Kind
 ```bash
 make test-e2e
+# Podman users:
+make test-e2e CONTAINER_TOOL=podman
 ```
 
 This requires:
 - Kind cluster (auto-created if needed)
-- Docker running
-- Will create a dedicated `pulse-test-e2e` cluster and clean up after completion
+- Docker running, or Podman selected with `CONTAINER_TOOL=podman`
+- Will create a dedicated `pulse-test-e2e` cluster and clean it up after success or failure
 
 ### Linting
 

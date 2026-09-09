@@ -86,16 +86,20 @@ jobs:
           kubectl apply -f config/samples/canary_v1alpha1_httpcanary_api_readiness.yaml
           kubectl apply -f config/samples/canary_v1alpha1_httpcanary_checkout_entry.yaml
 
-      - name: Wait for probe runner deployment
+      - name: Wait for probe runner
         run: |
+          # The probe runner is a StatefulSet, not a Deployment: shards derive
+          # their identity from a stable pod ordinal, which only a StatefulSet
+          # provides.
           deadline=$((SECONDS + 180))
           while [ $SECONDS -lt $deadline ]; do
-            if kubectl get deployment/pulse-probe-runner -n pulse-system >/dev/null 2>&1; then
-              kubectl rollout status deployment/pulse-probe-runner -n pulse-system --timeout=180s
+            if kubectl get statefulset/pulse-probe-runner -n pulse-system >/dev/null 2>&1; then
+              kubectl rollout status statefulset/pulse-probe-runner -n pulse-system --timeout=180s
               exit 0
             fi
             sleep 5
           done
+          kubectl get statefulsets -n pulse-system
           kubectl get deployments -n pulse-system
           kubectl logs deployment/pulse-controller-manager -n pulse-system --all-containers=true || true
           exit 1

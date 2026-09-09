@@ -45,7 +45,7 @@ make helm-deploy \
   HELM_IMAGE_PULL_SECRET=ghcr-pull-secret
 ```
 
-That same secret name is passed into the controller so the probe runner Deployment it creates can also pull from private GHCR.
+That same secret name is passed into the controller so the probe runner StatefulSet it creates can also pull from private GHCR.
 
 ## Alternative Helm Commands
 

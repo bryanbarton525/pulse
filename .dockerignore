@@ -1,11 +1,54 @@
 # More info: https://docs.docker.com/engine/reference/builder/#dockerignore-file
-# Ignore everything by default and re-include only needed files
-**
+#
+# This is a DENY list, not an allow list, and deliberately so.
+#
+# The previous version denied everything with "**" and re-included sources with
+# "!**/*.go". BuildKit honours that; Buildah does not expand "**/*.ext"
+# re-includes the same way, so under podman the build context arrived with no
+# Go files at all and the image build failed with "package cmd/... is not in
+# std". Listing what to exclude behaves identically across both builders.
+#
+# Keep this list conservative: an entry that wrongly excludes a source file
+# breaks the build loudly, but one that wrongly includes a directory only makes
+# the context bigger.
 
-# Re-include Go source files (but not *_test.go)
-!**/*.go
-**/*_test.go
+# Version control and CI definitions.
+.git/
+.github/
+.gitignore
 
-# Re-include Go module files
-!go.mod
-!go.sum
+# Build outputs and downloaded tooling.
+bin/
+dist/
+
+# Test-only assets that the images never run.
+test/
+
+# The raw model downloads. Only the CONVERTED artifacts next to them
+# (potion/model.bin, potion/vocab.txt, minilm/model.onnx, minilm/vocab.txt)
+# are baked into the images; the safetensors and tokenizer.json they were
+# derived from would add well over 100 MiB for nothing.
+hack/models/.cache/
+
+# Documentation and packaging metadata.
+docs/
+*.md
+LICENSE
+PROJECT
+
+# Container and build definitions -- copying these into the image would
+# invalidate its cache on every Dockerfile edit.
+Dockerfile
+Dockerfile.*
+Makefile
+.dockerignore
+
+# Local editor and tool artifacts.
+*.code-workspace
+.idea/
+.vscode/
+graphify-out/
+
+# Go test binaries and coverage output.
+*.test
+*.out

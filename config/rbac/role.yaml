@@ -9,7 +9,6 @@ rules:
   resources:
   - configmaps
   - secrets
-  - services
   verbs:
   - create
   - get
@@ -18,11 +17,33 @@ rules:
   - update
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
   - apps
   resources:
   - deployments
+  - statefulsets
   verbs:
   - create
+  - delete
   - get
   - list
   - patch
@@ -31,6 +52,25 @@ rules:
 - apiGroups:
   - canary.iambarton.com
   resources:
+  - anomalypolicies
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - canary.iambarton.com
+  resources:
+  - anomalypolicies/status
+  - grpccanaries/status
+  - httpcanaries/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - canary.iambarton.com
+  resources:
+  - grpccanaries
   - httpcanaries
   verbs:
   - create
@@ -43,14 +83,7 @@ rules:
 - apiGroups:
   - canary.iambarton.com
   resources:
+  - grpccanaries/finalizers
   - httpcanaries/finalizers
   verbs:
-  - update
-- apiGroups:
-  - canary.iambarton.com
-  resources:
-  - httpcanaries/status
-  verbs:
-  - get
-  - patch
   - update

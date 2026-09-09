@@ -113,6 +113,9 @@ make test
 
 # End-to-end tests (creates a Kind cluster)
 make test-e2e
+
+# Use the same isolated suite when Podman is your container runtime
+make test-e2e CONTAINER_TOOL=podman
 ```
 
 ### Lint

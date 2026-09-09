@@ -165,7 +165,7 @@ kubectl get httpcanary sample-ui-login-page -n default -o yaml
 - The canary stays `Unknown`:
   - Confirm the controller and probe runner are running in `pulse-system`
   - Check `kubectl logs -n pulse-system deployment/pulse-controller-manager -c manager`
-  - Check `kubectl logs -n pulse-system deployment/pulse-probe-runner -c probe-runner`
+  - Check `kubectl logs -n pulse-system pulse-probe-runner-0 -c probe-runner`
 - The journey fails on a later authenticated step:
   - Verify the earlier step actually sets the session cookie your application expects
   - Verify the application does not require browser-side JavaScript before issuing the next request

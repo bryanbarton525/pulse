@@ -16,11 +16,19 @@ env:
   REGISTRY: ghcr.io
   CONTROLLER_IMAGE_BASENAME: pulse-controller
   PROBE_RUNNER_IMAGE_BASENAME: pulse-probe-runner
+  INCIDENT_ENGINE_IMAGE_BASENAME: pulse-incident-engine
 
 jobs:
   publish:
     name: Build and Publish Images
     runs-on: ubuntu-latest
+
+    # Evaluated here because the `secrets` context is not available in a
+    # step-level `if:`. Referencing it there fails the entire workflow at
+    # validation time with "Unrecognized named-value: 'secrets'", before a
+    # single job is created.
+    env:
+      HAS_GHCR_TOKEN: ${{ secrets.GHCR_TOKEN != '' }}
 
     steps:
       - name: Clone the code
@@ -32,12 +40,13 @@ jobs:
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           echo "controller=${{ env.REGISTRY }}/${owner}/${{ env.CONTROLLER_IMAGE_BASENAME }}" >> "$GITHUB_OUTPUT"
           echo "probe_runner=${{ env.REGISTRY }}/${owner}/${{ env.PROBE_RUNNER_IMAGE_BASENAME }}" >> "$GITHUB_OUTPUT"
+          echo "incident_engine=${{ env.REGISTRY }}/${owner}/${{ env.INCIDENT_ENGINE_IMAGE_BASENAME }}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry with PAT
-        if: ${{ secrets.GHCR_TOKEN != '' }}
+        if: env.HAS_GHCR_TOKEN == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -45,12 +54,19 @@ jobs:
           password: ${{ secrets.GHCR_TOKEN }}
 
       - name: Log in to GitHub Container Registry with GITHUB_TOKEN
-        if: ${{ secrets.GHCR_TOKEN == '' }}
+        if: env.HAS_GHCR_TOKEN != 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch embedding models
+        run: |
+          # The probe runner and incident engine images bake these in. They are
+          # gitignored, so without this step the published images would start
+          # up, fail to load a model, and disable the triggers.
+          make fetch-models
 
       - name: Extract controller image metadata
         id: controller-meta
@@ -67,6 +83,16 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.image-names.outputs.probe_runner }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=tag
+            type=sha
+
+      - name: Extract incident engine image metadata
+        id: incident-engine-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image-names.outputs.incident_engine }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag
@@ -91,6 +117,18 @@ jobs:
           push: true
           tags: ${{ steps.probe-runner-meta.outputs.tags }}
           labels: ${{ steps.probe-runner-meta.outputs.labels }}
+
+      - name: Build and push incident engine image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.incidentengine
+          # ONNX Runtime publishes binaries only for these two architectures,
+          # so this image cannot target the wider list the others use.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.incident-engine-meta.outputs.tags }}
+          labels: ${{ steps.incident-engine-meta.outputs.labels }}
 
   release:
     name: Create Release Assets
@@ -127,7 +165,10 @@ jobs:
           RELEASE_VERSION="${VERSION#v}"
 
           make build-installer
-          cp config/crd/bases/canary.iambarton.com_httpcanaries.yaml dist/chart/crds/httpcanaries.canary.iambarton.com.yaml
+          for crd in httpcanaries grpccanaries anomalypolicies; do
+            cp "config/crd/bases/canary.iambarton.com_$crd.yaml" \
+               "dist/chart/crds/$crd.canary.iambarton.com.yaml"
+          done
 
           perl -0pi -e "s/^version:\s+.*/version: ${RELEASE_VERSION}/m; s/^appVersion:\s+.*$/appVersion: \"${RELEASE_VERSION}\"/m" dist/chart/Chart.yaml
 

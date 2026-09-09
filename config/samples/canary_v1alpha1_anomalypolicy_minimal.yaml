@@ -1,0 +1,14 @@
+# The smallest useful policy: correlate failures, and record a metric plus a
+# Kubernetes Event. No credentials, no external services, no model downloads
+# beyond what the images already carry.
+apiVersion: canary.iambarton.com/v1alpha1
+kind: AnomalyPolicy
+metadata:
+  name: basic-triage
+  namespace: pulse-system
+spec:
+  triggers:
+    failureCorrelation: {}   # an empty block enables it with defaults
+  actions:
+    - name: local
+      type: metric

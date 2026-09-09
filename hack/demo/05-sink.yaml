@@ -1,0 +1,121 @@
+# Stands in for Slack, a language model, and a logging backend.
+#
+# It records every request it receives, so `make demo-show` can read the real
+# payloads back instead of you having to trust that the actions fired.
+apiVersion: v1
+kind: Namespace
+metadata: {name: pulse-demo}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: sink-src, namespace: pulse-demo}
+data:
+  server.py: |
+    import json
+    from datetime import datetime, timezone
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    def analysis_for(raw):
+        text = raw.decode("utf-8", "replace")
+        if "bodyDrift" in text:
+            assessment = "A passing catalogue response changed semantics after deployment."
+            evidence = "The status stayed 200 while the Potion drift score crossed its configured threshold."
+            steps = "Compare the expected and observed catalogue payloads, then inspect the service release or configuration."
+        elif "shop/similar-a" in text or "shop/similar-b" in text:
+            assessment = "Two independent canaries reported the same failure shape without a declared dependency."
+            evidence = "MiniLM similarity exceeded the configured threshold and is recorded as the merge reason."
+            steps = "Compare mergeEvidence with the declared topology and inspect the shared target."
+        elif "shop/unrelated" in text:
+            assessment = "The control endpoint violated its configured content contract."
+            evidence = "HTTP stayed successful, but the response omitted the required healthy-control marker."
+            steps = "Inspect the unrelated deployment and verify its expected response marker."
+        elif "shop/mcp-tools" in text:
+            assessment = "The MCP server is reachable but no longer advertises a required tool."
+            evidence = "The initialize exchange succeeded and tools/list omitted health.check."
+            steps = "Compare the current MCP tool registry with the client contract."
+        elif "shop/orders" in text:
+            assessment = "The orders gRPC service reports NOT_SERVING through the standard health protocol."
+            evidence = "Transport succeeded but grpc.health.v1 returned a non-serving status."
+            steps = "Inspect orders readiness and the server's gRPC health registration."
+        elif "shop/login-journey" in text:
+            assessment = "The login journey reached the session step but its response failed the contract."
+            evidence = "The first step passed and the session response omitted the authenticated marker."
+            steps = "Inspect session creation and cookie propagation between journey steps."
+        elif "shop/no-content" in text:
+            assessment = "The no-content health endpoint returned the wrong HTTP contract."
+            evidence = "Pulse expected 204 and observed a response body with status 200."
+            steps = "Inspect the health handler and the configuration controlling its response contract."
+        elif "latencyShift" in text:
+            assessment = "The monitored endpoint remains correct but is materially slower than its learned baseline."
+            evidence = "Passing checks breached the configured latency z-score repeatedly."
+            steps = "Compare request latency with the baseline and inspect saturation or downstream waits."
+        else:
+            assessment = "The catalogue failed and its two real callers failed as a consequence."
+            evidence = "All three checks failed together and declared topology points from checkout and search to catalogue."
+            steps = "Inspect catalogue first, then confirm checkout and search recover without separate changes."
+        return (
+            "**Assessment** - " + assessment + "\n\n"
+            "**Evidence** - " + evidence + "\n\n"
+            "**Next steps** - " + steps + "\n\n"
+            "_Deterministic demo response; no real LLM inference was performed._"
+        )
+
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+
+            limit = 65536
+            authorization = self.headers.get("Authorization", "")
+            print(json.dumps({
+                "path": self.path,
+                "authPresent": bool(authorization),
+                "authScheme": authorization.split(" ", 1)[0] if authorization else "",
+                "ddkeyPresent": bool(self.headers.get("DD-API-KEY", "")),
+                "receivedAt": datetime.now(timezone.utc).isoformat(),
+                "bodyBytes": len(raw),
+                "truncated": len(raw) > limit,
+                "body": raw[:limit].decode("utf-8", "replace"),
+            }), flush=True)
+
+            if self.path.startswith("/v1/chat/completions"):
+                payload = json.dumps({
+                    "choices": [{"message": {"role": "assistant", "content": analysis_for(raw)}}]
+                }).encode()
+            else:
+                payload = b'{"ok":true}'
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    HTTPServer(("", 8080), H).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: sink, namespace: pulse-demo}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: sink}}
+  template:
+    metadata: {labels: {app: sink}}
+    spec:
+      containers:
+        - name: sink
+          image: python:3.12-alpine
+          command: ["python3", "/src/server.py"]
+          ports: [{containerPort: 8080}]
+          volumeMounts: [{name: src, mountPath: /src}]
+      volumes:
+        - {name: src, configMap: {name: sink-src}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: sink, namespace: pulse-demo}
+spec:
+  selector: {app: sink}
+  ports: [{port: 8080, targetPort: 8080}]

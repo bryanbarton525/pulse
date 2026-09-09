@@ -1,0 +1,27 @@
+# A canary opted into model-driven evaluation.
+#
+# Everything about the check itself is unchanged. Delete the `intelligence`
+# block and this behaves exactly as any other HttpCanary.
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata:
+  labels:
+    app.kubernetes.io/name: pulse
+    tier: prod
+  name: payments-api
+  namespace: default
+spec:
+  url: https://payments.example.com/api/orders
+  interval: 30
+  expectedStatus: 200
+  outputs:
+    - type: prometheus
+
+  intelligence:
+    policyRef:
+      name: prod-triage
+      namespace: pulse-system
+    # Optional per-canary tuning, for an endpoint that is unusually noisy or
+    # unusually stable, without needing its own policy.
+    overrides:
+      driftThreshold: "0.45"
