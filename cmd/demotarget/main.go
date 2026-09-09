@@ -106,6 +106,7 @@ func catalogueRoutes(mux *http.ServeMux, behavior *behaviorState) {
 			Value:    "authenticated",
 			Path:     "/",
 			HttpOnly: true,
+			Secure:   true,
 			SameSite: http.SameSiteLaxMode,
 		})
 		_, _ = w.Write([]byte("<html><body><h1>Sign in</h1></body></html>"))
