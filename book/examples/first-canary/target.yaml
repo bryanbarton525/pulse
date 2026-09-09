@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: book-shop
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalogue
+  namespace: book-shop
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: book-catalogue
+  template:
+    metadata:
+      labels:
+        app: book-catalogue
+    spec:
+      containers:
+        - name: catalogue
+          image: localhost/pulse-demo-target:book-v1
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DEMO_SERVICE
+              value: catalogue
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalogue
+  namespace: book-shop
+spec:
+  selector:
+    app: book-catalogue
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

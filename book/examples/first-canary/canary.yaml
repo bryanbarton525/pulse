@@ -1,0 +1,11 @@
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata:
+  name: catalogue
+  namespace: book-shop
+spec:
+  url: http://catalogue.book-shop.svc:8080/
+  method: GET
+  interval: 10
+  expectedStatus: 200
+  containsText: items

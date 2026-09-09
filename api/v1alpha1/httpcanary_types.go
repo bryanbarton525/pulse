@@ -155,6 +155,7 @@ type HttpCanarySpec struct {
 
 	// Interval is how often (in seconds) to run the check.
 	// +kubebuilder:validation:Minimum=5
+	// +kubebuilder:validation:Maximum=3600
 	// +kubebuilder:default=30
 	Interval int `json:"interval,omitempty"`
 

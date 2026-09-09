@@ -6,9 +6,9 @@
 
 Pulse is a Kubernetes operator that lets developers define canary health checks as custom resources. Apply a YAML file, and Pulse continuously monitors your endpoints and reports status back on the CR.
 
-Pulse supports simple single-request checks, scripted multi-step HTTP journeys for login, session, and checkout-style flows, and MCP tool-availability validation over HTTP.
+Pulse supports simple single-request checks, scripted multi-step HTTP journeys for login, session, and checkout-style flows, MCP tool-availability validation over HTTP, and gRPC health checks.
 
-For a self-contained Kind cluster with every canary type, narrated failures, live model evidence, action payloads, and hands-on validation labs, start with the [runnable quick start](docs/quick-start.html). The rest of `docs/` covers production architecture and operations.
+Choose the [Pulse Book](book/src/introduction.md) for the complete manual learning path, the [runnable quick start](docs/quick-start.html) for a self-contained automated Kind tour, or the [operations guide](docs/operations.md) for an existing installation. The book connects architecture, protocol, model, incident, action, recovery, and contributor exercises without hiding the underlying commands behind the demo harness.
 
 ## Quick Start
 
@@ -19,6 +19,8 @@ make demo-up
 make demo-tour-paced
 make demo-lab
 ```
+
+If image builds time out fetching modules from `proxy.golang.org` while the host can reach that URL, retry with `DOCKER_BUILD_FLAGS=--network=host make demo-up`.
 
 Every demo command pins Kubernetes operations to `kind-pulse-demo` by default; set `DEMO_CLUSTER=name` to use another dedicated Kind cluster. The shorter local-controller path below uses your current kubeconfig and needs an explicit, laptop-reachable results URL for status syncing.
 
@@ -408,7 +410,7 @@ For a fully in-cluster deployment, the cluster still needs access to a real prob
 - **Domain:** `iambarton.com`
 - **API Group:** `canary.iambarton.com`
 - **Built with:** Kubebuilder v4, controller-runtime v0.23
-- **Go version:** 1.25+
+- **Go version:** 1.26.1+
 
 ## License
 

@@ -1,0 +1,66 @@
+name: Book build
+
+on:
+  pull_request:
+    paths:
+      - 'book/**'
+      - 'book.toml'
+      - 'docs/**'
+      - 'README.md'
+      - 'DEBUG_GUIDE.md'
+      - '.github/workflows/docs.yml'
+  push:
+    branches: [main, feat/model-intelligence, codex/pulse-book]
+    paths:
+      - 'book/**'
+      - 'book.toml'
+      - 'docs/**'
+      - 'README.md'
+      - 'DEBUG_GUIDE.md'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: book/package-lock.json
+      - name: Prepare bundled diagrams
+        run: npm ci --prefix book --ignore-scripts && npm run --prefix book assets
+      - name: Install pinned mdBook
+        env:
+          MDBOOK_VERSION: '0.4.52'
+          MDBOOK_SHA256: 'c96bdabf3754d9e016fb803c1565a41050434479b2dc1e02a87c8d0da7524c6c'
+        run: |
+          curl --fail --location --retry 3 \
+            "https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            --output "$RUNNER_TEMP/mdbook.tar.gz"
+          echo "$MDBOOK_SHA256  $RUNNER_TEMP/mdbook.tar.gz" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/mdbook-bin"
+          tar -xzf "$RUNNER_TEMP/mdbook.tar.gz" -C "$RUNNER_TEMP/mdbook-bin"
+          echo "$RUNNER_TEMP/mdbook-bin" >> "$GITHUB_PATH"
+      - name: Build book
+        run: mdbook build && python3 book/check-links.py
+      - name: Package reproducible preview
+        run: |
+          tar --sort=name --mtime='UTC 1970-01-01' \
+            --owner=0 --group=0 --numeric-owner \
+            -czf pulse-book.tar.gz -C book/build .
+          sha256sum pulse-book.tar.gz > pulse-book.tar.gz.sha256
+      - name: Upload preview artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulse-book
+          path: |
+            book/build/
+            pulse-book.tar.gz
+            pulse-book.tar.gz.sha256
+          if-no-files-found: error

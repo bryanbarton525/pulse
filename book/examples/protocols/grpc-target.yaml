@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-grpc
+  namespace: book-shop
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: book-orders-grpc
+  template:
+    metadata:
+      labels:
+        app: book-orders-grpc
+    spec:
+      containers:
+        - name: orders-grpc
+          image: localhost/pulse-demo-target:book-v1
+          imagePullPolicy: IfNotPresent
+          args:
+            - --service=grpc
+          ports:
+            - name: grpc
+              containerPort: 50051
+            - name: control
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: control
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders-grpc
+  namespace: book-shop
+spec:
+  selector:
+    app: book-orders-grpc
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+    - name: control
+      port: 8080
+      targetPort: control

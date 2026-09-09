@@ -1,0 +1,10 @@
+{
+  "name": "pulse-book-assets",
+  "private": true,
+  "scripts": {
+    "assets": "node prepare-assets.cjs"
+  },
+  "devDependencies": {
+    "mermaid": "11.17.2"
+  }
+}

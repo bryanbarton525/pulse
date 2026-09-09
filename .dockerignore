@@ -32,6 +32,8 @@ hack/models/.cache/
 
 # Documentation and packaging metadata.
 docs/
+book/
+book.toml
 *.md
 LICENSE
 PROJECT

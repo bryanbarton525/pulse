@@ -17,6 +17,7 @@ Only the Python standard library is required for the F32 path. numpy is used
 only if a model ships F16 weights.
 """
 
+import hashlib
 import json
 import os
 import struct
@@ -28,27 +29,56 @@ HF = "https://huggingface.co"
 
 POTION_REPO = "minishlab/potion-base-32M"
 MINILM_REPO = "sentence-transformers/all-MiniLM-L6-v2"
+POTION_REVISION = "1e5a03f8eeb2c98b928fbbd846f22f816360919f"
+MINILM_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+
+POTION_MODEL_SHA256 = "99f6c33204c9231a7391871b7a3c91409b532c8f587a9ea44fc282303d8dec28"
+POTION_TOKENIZER_SHA256 = "7d75cbc54318138807c401b0f0c9721117c628b39de8e8e0edb6cb17e0ee7d18"
+MINILM_MODEL_SHA256 = "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452"
+MINILM_VOCAB_SHA256 = "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3"
 
 # Must match internal/embed/potion.go.
 MAGIC = b"PULSEM2V"
 VERSION = 1
 
 
-def download(url: str, target: Path) -> None:
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while chunk := handle.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def download(url: str, target: Path, expected_sha256: str) -> None:
     if target.exists() and target.stat().st_size > 0:
-        print(f"  have {target.name}")
-        return
+        actual_sha256 = sha256(target)
+        if actual_sha256 == expected_sha256:
+            print(f"  have {target.name} ({actual_sha256})")
+            return
+        print(f"  replacing {target.name}: sha256 {actual_sha256} does not match")
 
     print(f"  fetching {url}")
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix(target.suffix + ".partial")
+    temporary.unlink(missing_ok=True)
 
     request = urllib.request.Request(url, headers={"User-Agent": "pulse-fetch-models"})
+    digest = hashlib.sha256()
     with urllib.request.urlopen(request) as response, open(temporary, "wb") as handle:
         while chunk := response.read(1 << 20):
             handle.write(chunk)
+            digest.update(chunk)
 
-    temporary.rename(target)
+    actual_sha256 = digest.hexdigest()
+    if actual_sha256 != expected_sha256:
+        temporary.unlink()
+        raise SystemExit(
+            f"{url} has sha256 {actual_sha256}, expected {expected_sha256}"
+        )
+
+    temporary.replace(target)
+    print(f"  verified sha256 {actual_sha256}")
 
 
 def read_safetensors(path: Path):
@@ -144,8 +174,16 @@ def main() -> int:
     print("potion-base-32M (hot path: body drift)")
     safetensors = cache / "potion" / "model.safetensors"
     tokenizer = cache / "potion" / "tokenizer.json"
-    download(f"{HF}/{POTION_REPO}/resolve/main/model.safetensors", safetensors)
-    download(f"{HF}/{POTION_REPO}/resolve/main/tokenizer.json", tokenizer)
+    download(
+        f"{HF}/{POTION_REPO}/resolve/{POTION_REVISION}/model.safetensors",
+        safetensors,
+        POTION_MODEL_SHA256,
+    )
+    download(
+        f"{HF}/{POTION_REPO}/resolve/{POTION_REVISION}/tokenizer.json",
+        tokenizer,
+        POTION_TOKENIZER_SHA256,
+    )
 
     dimensions = convert_potion(safetensors, root / "potion" / "model.bin")
     tokens = write_vocab_from_tokenizer(tokenizer, root / "potion" / "vocab.txt")
@@ -153,8 +191,16 @@ def main() -> int:
           f"potion/vocab.txt ({tokens} tokens)")
 
     print("all-MiniLM-L6-v2 (cold path: correlation and novelty)")
-    download(f"{HF}/{MINILM_REPO}/resolve/main/onnx/model.onnx", root / "minilm" / "model.onnx")
-    download(f"{HF}/{MINILM_REPO}/resolve/main/vocab.txt", root / "minilm" / "vocab.txt")
+    download(
+        f"{HF}/{MINILM_REPO}/resolve/{MINILM_REVISION}/onnx/model.onnx",
+        root / "minilm" / "model.onnx",
+        MINILM_MODEL_SHA256,
+    )
+    download(
+        f"{HF}/{MINILM_REPO}/resolve/{MINILM_REVISION}/vocab.txt",
+        root / "minilm" / "vocab.txt",
+        MINILM_VOCAB_SHA256,
+    )
     print("  wrote minilm/model.onnx and minilm/vocab.txt")
 
     total = sum(f.stat().st_size for f in root.rglob("*") if f.is_file() and ".cache" not in f.parts)

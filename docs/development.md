@@ -2,8 +2,8 @@
 
 ## Prerequisites
 
-- Go 1.25+
-- Docker (for building images)
+- Go 1.26.1 or newer, matching `go.mod`
+- Docker or Podman (select Podman with `CONTAINER_TOOL=podman`)
 - kubectl configured to a cluster
 - Kind (for local testing)
 
@@ -20,7 +20,7 @@ pulse/
     proberunner/main.go       # Probe runner entrypoint
   internal/
     controller/
-      httpcanary_controller.go  # Reconciler: manages infrastructure
+      canary_controller.go      # Reconciler: manages infrastructure
       status_syncer.go          # Background status polling
     proberunner/
       config.go                 # Probe config types + file watcher
@@ -129,7 +129,7 @@ make lint-fix    # Auto-fix what's possible
 
 See [CRD Design](crd-design.md) for the full process. Quick checklist:
 
-1. Create `api/v1alpha1/<kind>_types.go`
+1. Scaffold with `kubebuilder create api --group canary --version v1alpha1 --kind <Kind>`; follow the project's existing API group configuration
 2. Add markers: `+kubebuilder:object:root=true`, `+kubebuilder:subresource:status`
 3. Register in `init()`: `SchemeBuilder.Register(&Kind{}, &KindList{})`
 4. Add probe type in `internal/proberunner/config.go`

@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp
+  namespace: book-shop
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: book-mcp
+  template:
+    metadata:
+      labels:
+        app: book-mcp
+    spec:
+      containers:
+        - name: mcp
+          image: localhost/pulse-demo-target:book-v1
+          imagePullPolicy: IfNotPresent
+          args:
+            - --service=mcp
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp
+  namespace: book-shop
+spec:
+  selector:
+    app: book-mcp
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

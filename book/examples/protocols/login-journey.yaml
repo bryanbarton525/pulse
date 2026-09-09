@@ -1,0 +1,22 @@
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata:
+  name: catalogue-login
+  namespace: book-shop
+spec:
+  url: http://catalogue.book-shop.svc:8080/login
+  interval: 10
+  expectedStatus: 200
+  journey:
+    - name: open-login
+      url: http://catalogue.book-shop.svc:8080/login
+      method: GET
+      expectedStatus: 200
+      containsText: Sign in
+    - name: read-session
+      url: http://catalogue.book-shop.svc:8080/session
+      method: GET
+      expectedStatus: 200
+      containsText: authenticated
+  outputs:
+    - type: prometheus

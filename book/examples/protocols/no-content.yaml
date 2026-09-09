@@ -1,0 +1,11 @@
+apiVersion: canary.iambarton.com/v1alpha1
+kind: HttpCanary
+metadata:
+  name: catalogue-no-content
+  namespace: book-shop
+spec:
+  url: http://catalogue.book-shop.svc:8080/health/no-content
+  interval: 10
+  expectedStatus: 204
+  outputs:
+    - type: prometheus

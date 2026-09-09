@@ -1,0 +1,11 @@
+apiVersion: canary.iambarton.com/v1alpha1
+kind: GrpcCanary
+metadata:
+  name: orders
+  namespace: book-shop
+spec:
+  url: orders-grpc.book-shop.svc:50051
+  service: shop.Orders
+  interval: 10
+  outputs:
+    - type: prometheus
