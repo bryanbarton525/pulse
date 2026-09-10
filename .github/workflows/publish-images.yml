@@ -14,9 +14,12 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  CONTROLLER_IMAGE_BASENAME: pulse-controller
-  PROBE_RUNNER_IMAGE_BASENAME: pulse-probe-runner
-  INCIDENT_ENGINE_IMAGE_BASENAME: pulse-incident-engine
+  # Nested under the pulse repo so GITHUB_TOKEN can push. User-level packages
+  # (bryanbarton525/pulse-controller and siblings) were created by a personal
+  # PAT and block Actions with permission_denied: read_package.
+  CONTROLLER_IMAGE_BASENAME: controller
+  PROBE_RUNNER_IMAGE_BASENAME: probe-runner
+  INCIDENT_ENGINE_IMAGE_BASENAME: incident-engine
 
 jobs:
   publish:
@@ -37,10 +40,10 @@ jobs:
       - name: Derive image repository names
         id: image-names
         run: |
-          owner="${GITHUB_REPOSITORY_OWNER,,}"
-          echo "controller=${{ env.REGISTRY }}/${owner}/${{ env.CONTROLLER_IMAGE_BASENAME }}" >> "$GITHUB_OUTPUT"
-          echo "probe_runner=${{ env.REGISTRY }}/${owner}/${{ env.PROBE_RUNNER_IMAGE_BASENAME }}" >> "$GITHUB_OUTPUT"
-          echo "incident_engine=${{ env.REGISTRY }}/${owner}/${{ env.INCIDENT_ENGINE_IMAGE_BASENAME }}" >> "$GITHUB_OUTPUT"
+          repo="${GITHUB_REPOSITORY,,}"
+          echo "controller=${{ env.REGISTRY }}/${repo}/${{ env.CONTROLLER_IMAGE_BASENAME }}" >> "$GITHUB_OUTPUT"
+          echo "probe_runner=${{ env.REGISTRY }}/${repo}/${{ env.PROBE_RUNNER_IMAGE_BASENAME }}" >> "$GITHUB_OUTPUT"
+          echo "incident_engine=${{ env.REGISTRY }}/${repo}/${{ env.INCIDENT_ENGINE_IMAGE_BASENAME }}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -145,8 +148,8 @@ jobs:
       - name: Derive controller image name
         id: image-names
         run: |
-          owner="${GITHUB_REPOSITORY_OWNER,,}"
-          echo "controller=${{ env.REGISTRY }}/${owner}/${{ env.CONTROLLER_IMAGE_BASENAME }}" >> "$GITHUB_OUTPUT"
+          repo="${GITHUB_REPOSITORY,,}"
+          echo "controller=${{ env.REGISTRY }}/${repo}/${{ env.CONTROLLER_IMAGE_BASENAME }}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Go
         uses: actions/setup-go@v5

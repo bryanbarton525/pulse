@@ -10,15 +10,27 @@ Tagged releases also publish a packaged chart as a GitHub Release asset, along w
 
 ## Basic Install
 
-For a public controller image and a public probe runner image:
+Images are published under the Pulse repository on GHCR (`ghcr.io/bryanbarton525/pulse/...`). `make helm-deploy` applies `config/crd/bases/` first because Helm does not upgrade CRDs that already exist.
 
 ```bash
 make helm-deploy \
-  IMG=ghcr.io/bryanbarton525/pulse-controller:latest \
-  PROBE_RUNNER_IMAGE=ghcr.io/bryanbarton525/pulse-probe-runner:latest
+  IMG=ghcr.io/bryanbarton525/pulse/controller:latest \
+  PROBE_RUNNER_IMAGE=ghcr.io/bryanbarton525/pulse/probe-runner:latest \
+  INCIDENT_ENGINE_IMAGE=ghcr.io/bryanbarton525/pulse/incident-engine:latest
 ```
 
 This installs the operator into `pulse-system` by default using the Helm release name `pulse`.
+
+If the kubeconfig cannot create namespaces or list ReplicaSets (Helm `--wait`), keep the namespace and skip those flags:
+
+```bash
+make helm-deploy \
+  IMG=ghcr.io/bryanbarton525/pulse/controller:latest \
+  PROBE_RUNNER_IMAGE=ghcr.io/bryanbarton525/pulse/probe-runner:latest \
+  INCIDENT_ENGINE_IMAGE=ghcr.io/bryanbarton525/pulse/incident-engine:latest \
+  HELM_CREATE_NAMESPACE=false \
+  HELM_WAIT=false
+```
 
 ## Private GHCR Install
 
@@ -40,8 +52,9 @@ Then deploy with Helm:
 
 ```bash
 make helm-deploy \
-  IMG=ghcr.io/bryanbarton525/pulse-controller:latest \
-  PROBE_RUNNER_IMAGE=ghcr.io/bryanbarton525/pulse-probe-runner:latest \
+  IMG=ghcr.io/bryanbarton525/pulse/controller:latest \
+  PROBE_RUNNER_IMAGE=ghcr.io/bryanbarton525/pulse/probe-runner:latest \
+  INCIDENT_ENGINE_IMAGE=ghcr.io/bryanbarton525/pulse/incident-engine:latest \
   HELM_IMAGE_PULL_SECRET=ghcr-pull-secret
 ```
 
@@ -117,12 +130,15 @@ Each step shares the same HTTP client and cookie jar, so session-based flows wor
 If you prefer raw Helm instead of the Make target:
 
 ```bash
+kubectl apply -f config/crd/bases/
 helm upgrade --install pulse dist/chart \
   --namespace pulse-system \
   --create-namespace \
-  --set manager.image.repository=ghcr.io/bryanbarton525/pulse-controller \
+  --set manager.image.repository=ghcr.io/bryanbarton525/pulse/controller \
   --set manager.image.tag=latest \
-  --set manager.probeRunnerImage.repository=ghcr.io/bryanbarton525/pulse-probe-runner \
+  --set manager.probeRunnerImage.repository=ghcr.io/bryanbarton525/pulse/probe-runner \
   --set manager.probeRunnerImage.tag=latest \
+  --set manager.incidentEngineImage.repository=ghcr.io/bryanbarton525/pulse/incident-engine \
+  --set manager.incidentEngineImage.tag=latest \
   --set manager.imagePullSecrets[0].name=ghcr-pull-secret
 ```
