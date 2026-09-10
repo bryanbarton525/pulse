@@ -8,11 +8,13 @@ import (
 	"sort"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/yaml"
 
 	canaryv1alpha1 "github.com/bryanbarton525/pulse/api/v1alpha1"
 	"github.com/bryanbarton525/pulse/internal/proberunner"
@@ -65,6 +67,10 @@ type StatusSyncer struct {
 	// incident engine deliberately hold no Kubernetes client, so this is the
 	// only component that can put an incident on `kubectl describe`.
 	Recorder events.EventRecorder
+
+	// TokenSource supplies the operational API bearer token. Tests may inject a
+	// rotating or failing source; production reads the controller-owned Secret.
+	TokenSource func(context.Context) (string, error)
 }
 
 // Start implements manager.Runnable. The manager calls this in a goroutine
@@ -95,18 +101,27 @@ func (s *StatusSyncer) Start(ctx context.Context) error {
 // syncAllStatuses does one full cycle: poll /results, list CRs, update statuses.
 func (s *StatusSyncer) syncAllStatuses(ctx context.Context) {
 	logger := log.FromContext(ctx).WithName("status-syncer")
+	token, err := s.operationalToken(ctx)
+	if err != nil {
+		logger.Error(err, "Could not read operational API token")
+		return
+	}
 
 	// ── Poll the probe runner ────────────────────────────
-	results, err := s.fetchResults()
+	results, err := s.fetchResultsWithToken(token)
 	if err != nil {
 		// Best-effort. The runner might not be ready yet (Deployment
 		// still starting, no CRs created yet, etc.). We'll retry
 		// on the next tick.
 		logger.Info("Could not fetch probe results", "error", err)
+		s.syncIncidents(ctx, token)
+		s.syncProposals(ctx, token)
 		return
 	}
 
 	if len(results) == 0 {
+		s.syncIncidents(ctx, token)
+		s.syncProposals(ctx, token)
 		return
 	}
 
@@ -200,7 +215,8 @@ func (s *StatusSyncer) syncAllStatuses(ctx context.Context) {
 
 	// Incidents are synced after results so a canary's phase and its incident
 	// membership land in the same cycle.
-	s.syncIncidents(ctx)
+	s.syncIncidents(ctx, token)
+	s.syncProposals(ctx, token)
 
 	logger.Info("Status sync complete",
 		"resultsReceived", len(results),
@@ -253,20 +269,24 @@ func (s *StatusSyncer) grpcStatusChanged(canary *canaryv1alpha1.GrpcCanary, res 
 // opts into intelligence, and it must not become a hidden dependency of plain
 // status reporting.
 func (s *StatusSyncer) fetchResults() ([]proberunner.ProbeResult, error) {
+	return s.fetchResultsWithToken("")
+}
+
+func (s *StatusSyncer) fetchResultsWithToken(token string) ([]proberunner.ProbeResult, error) {
 	if s.ResultsURL != "" {
-		return s.fetchResultsFrom(s.ResultsURL)
+		return s.fetchResultsFromWithToken(s.ResultsURL, token)
 	}
 
-	if results, err := s.fetchResultsFrom(s.incidentEngineURL() + "/results"); err == nil && len(results) > 0 {
+	if results, err := s.fetchResultsFromWithToken(s.incidentEngineURL()+"/results", token); err == nil && len(results) > 0 {
 		return results, nil
 	}
 
 	shards := probeRunnerShards()
 	if shards <= 1 {
-		return s.fetchResultsFrom(s.probeRunnerResultsURL())
+		return s.fetchResultsFromWithToken(s.probeRunnerResultsURL(), token)
 	}
 
-	return s.fetchShardedResults(int(shards))
+	return s.fetchShardedResultsWithToken(int(shards), token)
 }
 
 // fetchShardedResults polls every replica and merges what comes back.
@@ -278,12 +298,16 @@ func (s *StatusSyncer) fetchResults() ([]proberunner.ProbeResult, error) {
 // arbitrary shard, by contrast, would silently starve every other shard's
 // canaries of updates.
 func (s *StatusSyncer) fetchShardedResults(shards int) ([]proberunner.ProbeResult, error) {
+	return s.fetchShardedResultsWithToken(shards, "")
+}
+
+func (s *StatusSyncer) fetchShardedResultsWithToken(shards int, token string) ([]proberunner.ProbeResult, error) {
 	merged := make(map[string]proberunner.ProbeResult)
 	reached := 0
 	var lastErr error
 
 	for _, url := range s.shardResultsURLs(shards) {
-		results, err := s.fetchResultsFrom(url)
+		results, err := s.fetchResultsFromWithToken(url, token)
 		if err != nil {
 			lastErr = err
 			continue
@@ -312,8 +336,19 @@ func (s *StatusSyncer) fetchShardedResults(shards int) ([]proberunner.ProbeResul
 }
 
 func (s *StatusSyncer) fetchResultsFrom(url string) ([]proberunner.ProbeResult, error) {
+	return s.fetchResultsFromWithToken(url, "")
+}
+
+func (s *StatusSyncer) fetchResultsFromWithToken(url, token string) ([]proberunner.ProbeResult, error) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
-	resp, err := httpClient.Get(url)
+	request, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building GET %s: %w", url, err)
+	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("GET %s: %w", url, err)
 	}
@@ -331,6 +366,27 @@ func (s *StatusSyncer) fetchResultsFrom(url string) ([]proberunner.ProbeResult, 
 	}
 
 	return results, nil
+}
+
+func (s *StatusSyncer) operationalToken(ctx context.Context) (string, error) {
+	if s.TokenSource != nil {
+		return s.TokenSource(ctx)
+	}
+	var secret corev1.Secret
+	if err := s.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: ProbeAuthName}, &secret); err != nil {
+		return "", fmt.Errorf("reading %s: %w", ProbeAuthName, err)
+	}
+	if token := string(secret.Data[ProbeInternalTokenKey]); token != "" {
+		return token, nil
+	}
+	var authStore proberunner.AuthStore
+	if err := yaml.Unmarshal(secret.Data[ProbeAuthFile], &authStore); err != nil {
+		return "", fmt.Errorf("decoding %s: %w", ProbeAuthFile, err)
+	}
+	if token := authStore.Values[proberunner.InternalAuthTokenKey]; token != "" {
+		return token, nil
+	}
+	return "", fmt.Errorf("%s contains no internal token", ProbeAuthName)
 }
 
 func (s *StatusSyncer) probeRunnerResultsURL() string {
