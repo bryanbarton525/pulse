@@ -363,8 +363,9 @@ Tests that need real model weights skip automatically until `make fetch-models` 
 
 ```bash
 make helm-deploy \
-  IMG=ghcr.io/bryanbarton525/pulse-controller:latest \
-  PROBE_RUNNER_IMAGE=ghcr.io/bryanbarton525/pulse-probe-runner:latest
+  IMG=ghcr.io/bryanbarton525/pulse/controller:latest \
+  PROBE_RUNNER_IMAGE=ghcr.io/bryanbarton525/pulse/probe-runner:latest \
+  INCIDENT_ENGINE_IMAGE=ghcr.io/bryanbarton525/pulse/incident-engine:latest
 
 kubectl apply -f config/samples/canary_v1alpha1_httpcanary.yaml
 kubectl apply -f config/samples/canary_v1alpha1_httpcanary_204.yaml

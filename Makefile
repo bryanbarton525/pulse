@@ -533,6 +533,12 @@ HELM_CHART_DIR ?= dist/chart
 HELM_EXTRA_ARGS ?=
 ## Image pull secret name for private registries
 HELM_IMAGE_PULL_SECRET ?=
+## Set to false when the kubeconfig cannot create namespaces (the target
+## namespace must already exist).
+HELM_CREATE_NAMESPACE ?= true
+## Set to false when the kubeconfig cannot list ReplicaSets (Helm --wait
+## needs that). kubectl rollout status still verifies the controller.
+HELM_WAIT ?= true
 
 .PHONY: install-helm
 install-helm: ## Install the latest version of Helm.
@@ -543,20 +549,32 @@ install-helm: ## Install the latest version of Helm.
 
 .PHONY: helm-deploy
 helm-deploy: install-helm ## Deploy manager to the K8s cluster via Helm. Specify an image with IMG.
+	@# Helm never upgrades already-installed CRDs. Apply the generated schemas
+	@# first so a cluster with an older HttpCanary CRD picks up intelligence fields.
+	kubectl apply -f config/crd/bases/
 	@probe_runner_image="$${PROBE_RUNNER_IMAGE:-$(PROBE_RUNNER_IMAGE)}"; \
+	incident_engine_image="$${INCIDENT_ENGINE_IMAGE:-$(INCIDENT_ENGINE_IMAGE)}"; \
 	controller_repo="$${IMG%:*}"; \
 	controller_tag="$${IMG##*:}"; \
 	probe_repo="$${probe_runner_image%:*}"; \
 	probe_tag="$${probe_runner_image##*:}"; \
+	engine_repo="$${incident_engine_image%:*}"; \
+	engine_tag="$${incident_engine_image##*:}"; \
 	set -- \
 		--namespace $(HELM_NAMESPACE) \
-		--create-namespace \
 		--set manager.image.repository="$$controller_repo" \
 		--set manager.image.tag="$$controller_tag" \
 		--set manager.probeRunnerImage.repository="$$probe_repo" \
 		--set manager.probeRunnerImage.tag="$$probe_tag" \
-		--wait \
+		--set manager.incidentEngineImage.repository="$$engine_repo" \
+		--set manager.incidentEngineImage.tag="$$engine_tag" \
 		--timeout 5m; \
+		if [ "$(HELM_CREATE_NAMESPACE)" != "false" ]; then \
+			set -- "$$@" --create-namespace; \
+		fi; \
+		if [ "$(HELM_WAIT)" != "false" ]; then \
+			set -- "$$@" --wait; \
+		fi; \
 		if [ -n "$(HELM_IMAGE_PULL_SECRET)" ]; then \
 			set -- "$$@" --set manager.imagePullSecrets[0].name=$(HELM_IMAGE_PULL_SECRET); \
 		fi; \
