@@ -367,7 +367,7 @@ func intelligenceStatusNeedsUpdate(current, next *canaryv1alpha1.CanaryIntellige
 	if current.LastSignalTime == nil || next.LastSignalTime == nil {
 		return current.LastSignalTime != next.LastSignalTime
 	}
-	return !next.LastSignalTime.Time.Before(current.LastSignalTime.Time.Add(time.Minute))
+	return !next.LastSignalTime.Time.Before(current.LastSignalTime.Add(time.Minute))
 }
 
 func boolPointerEqual(left, right *bool) bool {
@@ -393,10 +393,6 @@ func inferredEqual(left, right []canaryv1alpha1.InferredDependency) bool {
 }
 
 // fetchIncidents polls the incident engine's open incidents.
-func (s *StatusSyncer) fetchIncidents() ([]incident.Incident, error) {
-	return s.fetchIncidentsWithToken("")
-}
-
 func (s *StatusSyncer) fetchIncidentsWithToken(token string) ([]incident.Incident, error) {
 	var incidents []incident.Incident
 	err := s.fetchJSONWithToken(s.incidentEngineURL()+"/incidents", &incidents, token)
@@ -404,20 +400,12 @@ func (s *StatusSyncer) fetchIncidentsWithToken(token string) ([]incident.Inciden
 }
 
 // fetchProposals polls the engine's learned dependency edges.
-func (s *StatusSyncer) fetchProposals() ([]incident.Proposal, error) {
-	return s.fetchProposalsWithToken("")
-}
-
 func (s *StatusSyncer) fetchProposalsWithToken(token string) ([]incident.Proposal, error) {
 	var topology struct {
 		Proposals []incident.Proposal `json:"proposals"`
 	}
 	err := s.fetchJSONWithToken(s.incidentEngineURL()+"/topology", &topology, token)
 	return topology.Proposals, err
-}
-
-func (s *StatusSyncer) fetchJSON(url string, target any) error {
-	return s.fetchJSONWithToken(url, target, "")
 }
 
 func (s *StatusSyncer) fetchJSONWithToken(url string, target any, token string) error {

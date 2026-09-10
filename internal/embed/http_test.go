@@ -158,7 +158,6 @@ func TestHTTPEmbedderRejectsInvalidIndexesAndDimensions(t *testing.T) {
 		`{"data":[{"index":0,"embedding":[1,0]},{"index":1,"embedding":[0,1,0]}]}`,
 	}
 	for _, response := range responses {
-		response := response
 		t.Run(response, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = w.Write([]byte(response))
@@ -245,12 +244,10 @@ func TestHTTPEmbedderConcurrentFirstRequest(t *testing.T) {
 	var group sync.WaitGroup
 	errors := make(chan error, 16)
 	for range 16 {
-		group.Add(1)
-		go func() {
-			defer group.Done()
+		group.Go(func() {
 			_, err := embedder.Embed(context.Background(), []string{"concurrent"})
 			errors <- err
-		}()
+		})
 	}
 	group.Wait()
 	close(errors)

@@ -297,10 +297,6 @@ func (s *StatusSyncer) fetchResultsWithToken(token string) ([]proberunner.ProbeR
 // previous status instead of corrupting them. Falling back to a single
 // arbitrary shard, by contrast, would silently starve every other shard's
 // canaries of updates.
-func (s *StatusSyncer) fetchShardedResults(shards int) ([]proberunner.ProbeResult, error) {
-	return s.fetchShardedResultsWithToken(shards, "")
-}
-
 func (s *StatusSyncer) fetchShardedResultsWithToken(shards int, token string) ([]proberunner.ProbeResult, error) {
 	merged := make(map[string]proberunner.ProbeResult)
 	reached := 0
