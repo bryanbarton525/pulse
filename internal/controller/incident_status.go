@@ -28,6 +28,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	canaryv1alpha1 "github.com/bryanbarton525/pulse/api/v1alpha1"
@@ -97,19 +99,18 @@ func (s *StatusSyncer) syncIncidents(ctx context.Context, token string) {
 		view, involved := views[key]
 		next := viewStatus(view, involved)
 
-		if !intelligenceStatusNeedsUpdate(canary.Status.Intelligence, next) {
-			continue
-		}
-
-		s.emitIncidentEvent(canary, canary.Status.Intelligence, next, view)
-		canary.Status.Intelligence = next
-
-		if err := s.Status().Update(ctx, canary); err != nil {
+		previous := canary.Status.Intelligence.DeepCopy()
+		changed, err := s.updateHTTPIntelligenceStatus(ctx, types.NamespacedName{Namespace: canary.Namespace, Name: canary.Name}, next)
+		if err != nil {
 			if !errors.IsNotFound(err) {
 				logger.Error(err, "Failed to update intelligence status", "canary", key)
 			}
 			continue
 		}
+		if !changed {
+			continue
+		}
+		s.emitIncidentEvent(canary, previous, next, view)
 		updated++
 	}
 
@@ -120,19 +121,18 @@ func (s *StatusSyncer) syncIncidents(ctx context.Context, token string) {
 		view, involved := views[key]
 		next := viewStatus(view, involved)
 
-		if !intelligenceStatusNeedsUpdate(canary.Status.Intelligence, next) {
-			continue
-		}
-
-		s.emitIncidentEvent(canary, canary.Status.Intelligence, next, view)
-		canary.Status.Intelligence = next
-
-		if err := s.Status().Update(ctx, canary); err != nil {
+		previous := canary.Status.Intelligence.DeepCopy()
+		changed, err := s.updateGRPCIntelligenceStatus(ctx, types.NamespacedName{Namespace: canary.Namespace, Name: canary.Name}, next)
+		if err != nil {
 			if !errors.IsNotFound(err) {
 				logger.Error(err, "Failed to update intelligence status", "grpccanary", key)
 			}
 			continue
 		}
+		if !changed {
+			continue
+		}
+		s.emitIncidentEvent(canary, previous, next, view)
 		updated++
 	}
 
@@ -141,6 +141,46 @@ func (s *StatusSyncer) syncIncidents(ctx context.Context, token string) {
 			"openIncidents", len(incidents), "statusesUpdated", updated)
 	}
 
+}
+
+func (s *StatusSyncer) updateHTTPIntelligenceStatus(ctx context.Context, key types.NamespacedName, next *canaryv1alpha1.CanaryIntelligenceStatus) (bool, error) {
+	changed := false
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var current canaryv1alpha1.HttpCanary
+		if err := s.Get(ctx, key, &current); err != nil {
+			return err
+		}
+		if !intelligenceStatusNeedsUpdate(current.Status.Intelligence, next) {
+			return nil
+		}
+		current.Status.Intelligence = next.DeepCopy()
+		if err := s.Status().Update(ctx, &current); err != nil {
+			return err
+		}
+		changed = true
+		return nil
+	})
+	return changed, err
+}
+
+func (s *StatusSyncer) updateGRPCIntelligenceStatus(ctx context.Context, key types.NamespacedName, next *canaryv1alpha1.CanaryIntelligenceStatus) (bool, error) {
+	changed := false
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var current canaryv1alpha1.GrpcCanary
+		if err := s.Get(ctx, key, &current); err != nil {
+			return err
+		}
+		if !intelligenceStatusNeedsUpdate(current.Status.Intelligence, next) {
+			return nil
+		}
+		current.Status.Intelligence = next.DeepCopy()
+		if err := s.Status().Update(ctx, &current); err != nil {
+			return err
+		}
+		changed = true
+		return nil
+	})
+	return changed, err
 }
 
 // buildIntelligenceViews indexes incident membership by probe.
@@ -291,15 +331,24 @@ func (s *StatusSyncer) syncProposals(ctx context.Context, token string) {
 			return relevant[i].To < relevant[j].To
 		})
 
-		if inferredEqual(policy.Status.InferredDependencies, relevant) {
-			continue
-		}
-
-		policy.Status.InferredDependencies = relevant
-		if err := s.Status().Update(ctx, policy); err != nil && !errors.IsNotFound(err) {
+		if err := s.updatePolicyProposals(ctx, types.NamespacedName{Namespace: policy.Namespace, Name: policy.Name}, relevant); err != nil && !errors.IsNotFound(err) {
 			logger.Error(err, "Failed to update AnomalyPolicy status", "policy", key)
 		}
 	}
+}
+
+func (s *StatusSyncer) updatePolicyProposals(ctx context.Context, key types.NamespacedName, relevant []canaryv1alpha1.InferredDependency) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var current canaryv1alpha1.AnomalyPolicy
+		if err := s.Get(ctx, key, &current); err != nil {
+			return err
+		}
+		if inferredEqual(current.Status.InferredDependencies, relevant) {
+			return nil
+		}
+		current.Status.InferredDependencies = relevant
+		return s.Status().Update(ctx, &current)
+	})
 }
 
 // policyOwners maps each canary to the policy governing it.

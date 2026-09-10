@@ -393,9 +393,13 @@ func (r *CanaryReconciler) ensureNamedService(
 			service.Spec.Type = corev1.ServiceTypeClusterIP
 		}
 
+		metricsPort, apiPort := ProbeRunnerPort, ProbeRunnerAPIPort
+		if name == IncidentEngineName {
+			metricsPort, apiPort = IncidentEnginePort, IncidentEngineAPIPort
+		}
 		service.Spec.Ports = []corev1.ServicePort{
-			{Name: "http", Port: 9090, TargetPort: intstr.FromString("http"), Protocol: corev1.ProtocolTCP},
-			{Name: "api", Port: 9091, TargetPort: intstr.FromString("api"), Protocol: corev1.ProtocolTCP},
+			{Name: "http", Port: int32(metricsPort), TargetPort: intstr.FromString("http"), Protocol: corev1.ProtocolTCP},
+			{Name: "api", Port: int32(apiPort), TargetPort: intstr.FromString("api"), Protocol: corev1.ProtocolTCP},
 		}
 
 		return nil

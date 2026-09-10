@@ -2,6 +2,7 @@
 
 [Welcome](introduction.md)
 [Quick start](quick-start.md)
+[Operational API access](operational-api-access.md)
 
 # Learn Pulse
 

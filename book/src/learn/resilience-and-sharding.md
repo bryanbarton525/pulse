@@ -1,5 +1,7 @@
 # Degrade safely and shard probe ownership
 
+Before running operational API examples, complete [authenticated operational API access](../operational-api-access.md) and keep that port-forward active.
+
 ## Learning objective
 
 Test unavailable models, stale results, runner and engine restarts, and two runner shards. Identify which deterministic behavior survives and which in-memory intelligence state is lost.
@@ -11,8 +13,7 @@ Test unavailable models, stale results, runner and engine restarts, and two runn
 Use the healthy `shop` fixtures, `demo-triage`, and no open incidents. Record live freshness before changing anything:
 
 ```sh
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/results' \
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/results \
   > /tmp/pulse-book-results-before.json
 python3 -m json.tool /tmp/pulse-book-results-before.json
 kubectl --context kind-pulse-book -n pulse-system get statefulset pulse-probe-runner \
@@ -66,8 +67,7 @@ for canary in catalogue checkout search; do
   kubectl --context kind-pulse-book -n shop wait httpcanary/"$canary" \
     --for=jsonpath='{.status.phase}'=Unhealthy --timeout=180s
 done
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/incidents' |
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/incidents |
   python3 -m json.tool
 ```
 
@@ -99,8 +99,7 @@ CR_BEFORE=$(kubectl --context kind-pulse-book -n shop get httpcanary catalogue \
   -o jsonpath='{.status.lastCheckTime}')
 kubectl --context kind-pulse-book -n pulse-system delete pod pulse-probe-runner-0
 for attempt in $(seq 1 60); do
-  kubectl --context kind-pulse-book -n pulse-system get --raw \
-    '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/results' \
+  curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/results \
     > /tmp/pulse-book-results-during-restart.json
   kubectl --context kind-pulse-book -n pulse-system get pod pulse-probe-runner-0
   sleep 2
@@ -144,8 +143,7 @@ right = {r["name"] for r in json.load(open("/tmp/pulse-book-shard-1.json"))}
 assert left.isdisjoint(right), left & right
 print("\n".join(sorted(left | right)))
 PY
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/results' |
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/results |
   python3 -m json.tool
 kubectl --context kind-pulse-book -n pulse-system get statefulset pulse-probe-runner \
   -o jsonpath='{range .spec.template.spec.containers[0].resources.requests}{@}{"\n"}{end}'

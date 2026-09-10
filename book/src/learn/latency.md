@@ -1,5 +1,7 @@
 # Detect latency shifts with EWMA statistics
 
+Before running operational API examples, complete [authenticated operational API access](../operational-api-access.md) and keep that port-forward active.
+
 ## Learning objective
 
 Observe a passing endpoint become slow, calculate what Pulse compares, and separate per-canary EWMA statistics from every embedding-based feature.
@@ -45,8 +47,7 @@ Every canary has independent state. A slow upstream can therefore raise separate
 
 ```sh
 for attempt in $(seq 1 90); do
-  RESULTS=$(kubectl --context kind-pulse-book -n pulse-system get --raw \
-    '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/results')
+  RESULTS=$(curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/results)
   STATE=$(printf '%s' "$RESULTS" | python3 -c '
 import json,sys
 for result in json.load(sys.stdin):
@@ -79,8 +80,7 @@ kubectl --context kind-pulse-book -n book-shop wait httpcanary/catalogue \
   --for=jsonpath='{.status.intelligence.trigger}'=latencyShift --timeout=240s
 kubectl --context kind-pulse-book -n book-shop get httpcanary catalogue \
   -o jsonpath='{.status.phase}{" "}{.status.intelligence.score}{" "}{.status.intelligence.incidentID}{"\n"}'
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/results' |
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/results |
   python3 -m json.tool
 ```
 
@@ -106,8 +106,7 @@ kubectl --context kind-pulse-book -n pulse-system get configmap pulse-probe-conf
 Restore and wait for a new live result with a cleared incident:
 
 ```sh
-BEFORE=$(kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/results' |
+BEFORE=$(curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/results |
   python3 -c '
 import json,sys
 print(next(r["lastCheckTime"] for r in json.load(sys.stdin)
@@ -119,8 +118,7 @@ EOF
 for attempt in $(seq 1 90); do
   ID=$(kubectl --context kind-pulse-book -n book-shop get httpcanary catalogue \
     -o jsonpath='{.status.intelligence.incidentID}')
-  NOW=$(kubectl --context kind-pulse-book -n pulse-system get --raw \
-    '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/results' |
+  NOW=$(curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/results |
     python3 -c '
 import json,sys
 print(next(r["lastCheckTime"] for r in json.load(sys.stdin)

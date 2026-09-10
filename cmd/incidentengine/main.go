@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/bryanbarton525/pulse/internal/actions"
+	"github.com/bryanbarton525/pulse/internal/authn"
 	"github.com/bryanbarton525/pulse/internal/embed"
 	"github.com/bryanbarton525/pulse/internal/incident"
 	"github.com/bryanbarton525/pulse/internal/proberunner"
@@ -49,6 +50,7 @@ func main() {
 	var authFilePath string
 	var listenAddr string
 	var apiListenAddr string
+	var allowUnauthenticatedAPI bool
 	var onnxLibraryPath string
 
 	flag.StringVar(&configPath, "config", "/etc/pulse/probes.yaml",
@@ -57,6 +59,8 @@ func main() {
 		"Path to the auth file (mounted from the same Secret the runners read).")
 	flag.StringVar(&listenAddr, "listen", ":9090", "Address to serve metrics and liveness on.")
 	flag.StringVar(&apiListenAddr, "api-listen", ":9091", "Address to serve the authenticated operational API on.")
+	flag.BoolVar(&allowUnauthenticatedAPI, "allow-unauthenticated-api", false,
+		"Allow tokenless operational API access for explicit local development only.")
 	flag.StringVar(&onnxLibraryPath, "onnxruntime-lib", "",
 		"Path to libonnxruntime.so. Defaults to the ONNXRUNTIME_SHARED_LIBRARY_PATH env var.")
 
@@ -127,8 +131,10 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	apiServer := &http.Server{
-		Addr:              apiListenAddr,
-		Handler:           incident.NewAPIServeMux(engine, aggregator, logger, internalToken.Get),
+		Addr: apiListenAddr,
+		Handler: incident.NewAPIServeMux(engine, aggregator, logger, authn.Policy{
+			Token: internalToken.Get, AllowUnauthenticated: allowUnauthenticatedAPI,
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

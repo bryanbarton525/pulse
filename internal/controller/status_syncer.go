@@ -11,7 +11,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/yaml"
@@ -58,6 +60,10 @@ type StatusSyncer struct {
 	// runner. This is primarily useful for local controller runs that need to
 	// talk to a port-forwarded or otherwise externally reachable runner.
 	ResultsURL string
+
+	// ProbeRunnerURL overrides only the runner fallback source. It keeps the
+	// engine-first behavior intact and makes fallback integration-testable.
+	ProbeRunnerURL string
 
 	// IncidentEngineURL overrides the default in-cluster address of the
 	// incident engine, for the same local-development reason.
@@ -153,23 +159,11 @@ func (s *StatusSyncer) syncAllStatuses(ctx context.Context) {
 		if !found {
 			continue
 		}
-
 		if !s.statusChanged(canary, res) {
 			continue
 		}
 
-		if res.Healthy {
-			canary.Status.Phase = canaryv1alpha1.PhaseHealthy
-		} else {
-			canary.Status.Phase = canaryv1alpha1.PhaseUnhealthy
-		}
-		canary.Status.LastStatus = res.StatusCode
-		canary.Status.Message = res.Message
-
-		checkTime := metav1.NewTime(res.LastCheckTime)
-		canary.Status.LastCheckTime = &checkTime
-
-		if err := s.Status().Update(ctx, canary); err != nil {
+		if err := s.updateHTTPResultStatus(ctx, types.NamespacedName{Namespace: canary.Namespace, Name: canary.Name}, res); err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}
@@ -187,23 +181,11 @@ func (s *StatusSyncer) syncAllStatuses(ctx context.Context) {
 		if !found {
 			continue
 		}
-
 		if !s.grpcStatusChanged(canary, res) {
 			continue
 		}
 
-		if res.Healthy {
-			canary.Status.Phase = canaryv1alpha1.PhaseHealthy
-		} else {
-			canary.Status.Phase = canaryv1alpha1.PhaseUnhealthy
-		}
-		canary.Status.LastStatus = res.StatusCode
-		canary.Status.Message = res.Message
-
-		checkTime := metav1.NewTime(res.LastCheckTime)
-		canary.Status.LastCheckTime = &checkTime
-
-		if err := s.Status().Update(ctx, canary); err != nil {
+		if err := s.updateGRPCResultStatus(ctx, types.NamespacedName{Namespace: canary.Namespace, Name: canary.Name}, res); err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}
@@ -224,6 +206,45 @@ func (s *StatusSyncer) syncAllStatuses(ctx context.Context) {
 		"grpcCanariesChecked", len(grpcCanaryList.Items),
 		"statusesUpdated", updated,
 	)
+}
+
+func (s *StatusSyncer) updateHTTPResultStatus(ctx context.Context, key types.NamespacedName, res proberunner.ProbeResult) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var current canaryv1alpha1.HttpCanary
+		if err := s.Get(ctx, key, &current); err != nil {
+			return err
+		}
+		if !s.statusChanged(&current, res) {
+			return nil
+		}
+		applyResultStatus(&current.Status.Phase, &current.Status.LastStatus, &current.Status.Message, &current.Status.LastCheckTime, res)
+		return s.Status().Update(ctx, &current)
+	})
+}
+
+func (s *StatusSyncer) updateGRPCResultStatus(ctx context.Context, key types.NamespacedName, res proberunner.ProbeResult) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var current canaryv1alpha1.GrpcCanary
+		if err := s.Get(ctx, key, &current); err != nil {
+			return err
+		}
+		if !s.grpcStatusChanged(&current, res) {
+			return nil
+		}
+		applyResultStatus(&current.Status.Phase, &current.Status.LastStatus, &current.Status.Message, &current.Status.LastCheckTime, res)
+		return s.Status().Update(ctx, &current)
+	})
+}
+
+func applyResultStatus(phase *string, lastStatus *int, message *string, lastCheckTime **metav1.Time, res proberunner.ProbeResult) {
+	*phase = canaryv1alpha1.PhaseUnhealthy
+	if res.Healthy {
+		*phase = canaryv1alpha1.PhaseHealthy
+	}
+	*lastStatus = res.StatusCode
+	*message = res.Message
+	checkTime := metav1.NewTime(res.LastCheckTime)
+	*lastCheckTime = &checkTime
 }
 
 // statusChanged returns true if the probe result differs from the CR's
@@ -386,6 +407,9 @@ func (s *StatusSyncer) operationalToken(ctx context.Context) (string, error) {
 }
 
 func (s *StatusSyncer) probeRunnerResultsURL() string {
+	if s.ProbeRunnerURL != "" {
+		return s.ProbeRunnerURL
+	}
 	if s.ResultsURL != "" {
 		return s.ResultsURL
 	}

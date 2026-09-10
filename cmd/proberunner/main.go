@@ -15,6 +15,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	"github.com/bryanbarton525/pulse/internal/authn"
 	"github.com/bryanbarton525/pulse/internal/proberunner"
 )
 
@@ -23,6 +24,7 @@ func main() {
 	var authFilePath string
 	var listenAddr string
 	var apiListenAddr string
+	var allowUnauthenticatedAPI bool
 	var incidentEngineURL string
 	var hotModelPath string
 	var hotVocabPath string
@@ -33,6 +35,8 @@ func main() {
 		"Path to the auth file (mounted from Secret).")
 	flag.StringVar(&listenAddr, "listen", ":9090", "Address to serve metrics and liveness on.")
 	flag.StringVar(&apiListenAddr, "api-listen", ":9091", "Address to serve the authenticated operational API on.")
+	flag.BoolVar(&allowUnauthenticatedAPI, "allow-unauthenticated-api", false,
+		"Allow tokenless operational API access for explicit local development only.")
 	flag.StringVar(&incidentEngineURL, "incident-engine", "",
 		"Base URL of the incident engine. Empty disables correlation and action dispatch.")
 	flag.StringVar(&hotModelPath, "hot-model", proberunner.DefaultHotModelPath,
@@ -144,8 +148,10 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	apiServer := &http.Server{
-		Addr:              apiListenAddr,
-		Handler:           proberunner.NewAPIServeMux(runner, logger, internalToken.Get),
+		Addr: apiListenAddr,
+		Handler: proberunner.NewAPIServeMux(runner, logger, authn.Policy{
+			Token: internalToken.Get, AllowUnauthenticated: allowUnauthenticatedAPI,
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

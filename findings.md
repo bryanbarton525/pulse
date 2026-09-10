@@ -7,11 +7,26 @@ This document is the plan-mode handoff for the final review of Pulse after PR #4
 ## Repository state
 
 - Reviewed baseline: `main` at `29aaedfb7011d403f993cdc0dbb9de0b1c69fc6f`.
-- Active remediation branch: `codex/final-review-fixes`.
+- Active delivery branch: `cursor/cloud-agent-1789008034228-6x55c`, fast-forwarded to PR #13 head `b5bf70d` before the completion work.
 - First pushed checkpoint: `c93f160` (`docs: add Graphify review artifacts`).
 - Graphify report, manifest, and cost metadata are tracked under `graphify-out/`.
 - `graphify-out/graph.json`, `graphify-out/graph.html`, and extraction caches remain ignored because they are reproducible and exceed the repository's large-file hook threshold.
 - Do not edit generated CRDs, generated RBAC, `zz_generated.*.go`, or `PROJECT` directly.
+
+## PR #13 completion evidence
+
+The current working tree closes the remaining repository-owned portions of F02, F04, F05, and F06 and preserves the completed F03 hardening:
+
+- F02: `internal/authn`, both runtime server packages, and binary wiring now require a structurally valid Bearer header, fail closed for an empty production token, support an explicit local-only bypass, and keep metrics/liveness isolated on 9090 from operational APIs on 9091. Server and demo-helper regressions cover malformed headers, rotation, closed-empty-token behavior, redaction, and port-forward cleanup.
+- F04: successful empty proposal responses remain authoritative, and policy reconciliation clears inferred dependencies after the final canary reference disappears, even when the optional engine is absent.
+- F05: status writers re-fetch and retry conflicts while preserving independently owned fields. `lastSignalTime` is documented as the latest signal for the active incident; timestamp-only writes use the tested one-minute boundary, while material changes and closure remain immediate.
+- F06: `plan.md` is replaced by the current PR #13 completion plan and was deliberately preserved while moving from the base branch to the delivery branch.
+- Generated CRDs and `dist/install.yaml` were rebuilt with `make manifests generate` and `make build-installer`; they were not edited by hand.
+- `make test` passed with coverage; `make lint-fix` reported zero issues; `go test -race ./internal/embed ./internal/incident ./internal/controller` passed; demo helper tests passed; and mdBook 0.4.52 built 37 pages with clean asset, link, and fragment validation.
+- Isolated Kind E2E was not run in this workspace: Docker is absent, Podman is unreachable, and the active kubeconfig is the real `homelab-k3s` context. Per repository policy, no E2E command was redirected at that cluster. The authenticated-boundary Kind cases remain a CI/privileged-host gate.
+- Graphify was incrementally rebuilt after the source and documentation changes; the tracked report and manifest are refreshed while large reproducible graph outputs remain ignored.
+
+F01 still requires repository-owner GHCR package permission changes and a successful post-merge `main` publication. F07 remains separately owned dependency-alert work; no dependency upgrade is mixed into PR #13.
 
 ## Review coverage and evidence
 

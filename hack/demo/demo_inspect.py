@@ -11,11 +11,17 @@ import os
 import shlex
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
+from contextlib import contextmanager
+from base64 import b64decode
 from datetime import datetime, timezone
 
 
 KUBECTL = shlex.split(os.environ.get("KUBECTL", "kubectl"))
-ENGINE_PROXY = "/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy"
+ENGINE_SERVICE = "service/pulse-incident-engine"
+ENGINE_LOCAL_PORT = int(os.environ.get("DEMO_ENGINE_API_PORT", "19091"))
 STALE_SECONDS = int(os.environ.get("DEMO_STALE_SECONDS", "45"))
 
 
@@ -27,6 +33,65 @@ def kubectl_json(*args):
         detail = getattr(error, "stderr", "").strip()
         raise SystemExit(f"Could not read the demo cluster: {detail or error}") from error
     return json.loads(completed.stdout)
+
+
+def internal_token():
+    secret = kubectl_json("-n", "pulse-system", "get", "secret", "pulse-probe-auth", "-o", "json")
+    encoded = secret.get("data", {}).get("internal-token", "")
+    if not encoded:
+        raise SystemExit("pulse-probe-auth is missing data.internal-token")
+    try:
+        token = b64decode(encoded, validate=True).decode()
+    except (ValueError, UnicodeDecodeError) as error:
+        raise SystemExit("pulse-probe-auth data.internal-token is invalid") from error
+    if not token:
+        raise SystemExit("pulse-probe-auth data.internal-token is empty")
+    return token
+
+
+@contextmanager
+def api_forward(service=ENGINE_SERVICE, local_port=ENGINE_LOCAL_PORT):
+    command = [*KUBECTL, "-n", "pulse-system", "port-forward", service, f"{local_port}:9091"]
+    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    try:
+        for _ in range(50):
+            if process.poll() is not None:
+                detail = process.stderr.read().strip()
+                raise SystemExit(f"Could not establish operational API port-forward: {detail}")
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{local_port}/", timeout=0.1):
+                    pass
+            except urllib.error.HTTPError:
+                break
+            except (urllib.error.URLError, TimeoutError):
+                time.sleep(0.1)
+        else:
+            raise SystemExit("Timed out establishing operational API port-forward")
+        yield f"http://127.0.0.1:{local_port}"
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+
+def operational_json(path):
+    token = internal_token()
+    try:
+        with api_forward() as base_url:
+            request = urllib.request.Request(
+                base_url + path, headers={"Authorization": "Bearer " + token}
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return json.load(response)
+    except urllib.error.HTTPError as error:
+        raise SystemExit(f"Operational API {path} returned HTTP {error.code}") from error
+    except urllib.error.URLError as error:
+        raise SystemExit(f"Could not read operational API {path}: {error.reason}") from error
+    finally:
+        token = ""
 
 
 def cell(value, empty="-"):
@@ -62,7 +127,7 @@ def resources():
 
 
 def live_results():
-    payload = kubectl_json("-n", "pulse-system", "get", "--raw", ENGINE_PROXY + "/results")
+    payload = operational_json("/results")
     if not isinstance(payload, list):
         raise SystemExit(f"Incident engine returned {type(payload).__name__} for /results; expected an array")
     return {
@@ -159,7 +224,7 @@ def print_status(names=()):
 
 
 def print_incidents():
-    incidents = kubectl_json("-n", "pulse-system", "get", "--raw", ENGINE_PROXY + "/incidents")
+    incidents = operational_json("/incidents")
     if not incidents:
         print("No open incidents. The engine closes an incident after its members recover.")
         return
@@ -200,7 +265,7 @@ def print_incidents():
 
 
 def print_topology():
-    topology = kubectl_json("-n", "pulse-system", "get", "--raw", ENGINE_PROXY + "/topology")
+    topology = operational_json("/topology")
     print("Declared edges (active correlation evidence):")
     declared = topology.get("declared") or {}
     if isinstance(declared, dict):
@@ -291,7 +356,7 @@ detector marked "warming" has not produced a trustworthy zero score yet.
 
 
 def usage():
-    print("usage: inspect.py overview|status [canary ...]|incidents|topology|policy|canary NAME", file=sys.stderr)
+    print("usage: inspect.py overview|status [canary ...]|incidents|topology|policy|canary NAME|raw results|incidents|topology", file=sys.stderr)
     return 2
 
 
@@ -309,6 +374,8 @@ def main():
         print_policy()
     elif command == "canary" and len(sys.argv) == 3:
         print_canary(sys.argv[2])
+    elif command == "raw" and len(sys.argv) == 3 and sys.argv[2] in {"results", "incidents", "topology"}:
+        print(json.dumps(operational_json("/" + sys.argv[2])))
     else:
         return usage()
     return 0

@@ -14,8 +14,8 @@ flowchart TD
     Runner -->|protocol requests| Target[Monitored applications]
     Runner -->|normalized observations| Engine
     Engine -->|investigations and notifications| Sink[Action endpoints]
-    Runner -->|live results| Controller
-    Engine -->|incidents and aggregated results| Controller
+    Runner -->|Bearer-authenticated live results on 9091| Controller
+    Engine -->|Bearer-authenticated incidents and aggregated results on 9091| Controller
 ```
 
 The controller owns Kubernetes updates. Runners execute requests and retain
@@ -23,6 +23,8 @@ response bodies locally; only normalized detector and failure evidence crosses
 into the optional engine. The engine aggregates that evidence and dispatches
 configured actions. Both result paths return to the status syncer, which
 projects meaningful changes into custom-resource status.
+
+Metrics and liveness use the `http` port on 9090. Operational reads and writes use the `api` port on 9091 and a dynamically reloadable internal Bearer token. Embedding vectors carry an identity derived from their resolved backend configuration; credential-only rotation preserves learned state, while a changed embedding space clears incompatible correlation candidates and novelty state.
 
 ## Data Flow
 

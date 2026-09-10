@@ -70,11 +70,13 @@ kubectl apply -f config/samples/canary_v1alpha1_httpcanary.yaml
 
 # Export the generated probe config and run a local probe runner
 kubectl get configmap pulse-probe-config -n pulse-system -o jsonpath='{.data.probes\.yaml}' > /tmp/pulse-probes.yaml
-./bin/probe-runner --config=/tmp/pulse-probes.yaml --listen=127.0.0.1:9090
+kubectl get secret pulse-probe-auth -n pulse-system -o jsonpath='{.data.auth\.yaml}' | base64 --decode > /tmp/pulse-auth.yaml
+./bin/probe-runner --config=/tmp/pulse-probes.yaml --auth-file=/tmp/pulse-auth.yaml \
+  --listen=127.0.0.1:9090 --api-listen=127.0.0.1:9091
 
 # Run the controller on your machine with a local /results override
 POD_NAMESPACE=pulse-system \
-PULSE_PROBE_RUNNER_RESULTS_URL=http://127.0.0.1:9090/results \
+PULSE_PROBE_RUNNER_RESULTS_URL=http://127.0.0.1:9091/results \
 make run
 
 # Watch status updates
@@ -170,7 +172,10 @@ kubectl get httpcanary <name> -o yaml
 ### Probe runner results
 
 ```bash
-kubectl -n pulse-system port-forward svc/pulse-probe-runner 9090:9090
-curl http://localhost:9090/results | jq .
+kubectl -n pulse-system port-forward svc/pulse-probe-runner 9091:9091
+PULSE_INTERNAL_TOKEN=$(kubectl -n pulse-system get secret/pulse-probe-auth \
+  -o jsonpath='{.data.internal-token}' | base64 --decode)
+curl -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://localhost:9091/results | jq .
 curl http://localhost:9090/metrics
+unset PULSE_INTERNAL_TOKEN
 ```

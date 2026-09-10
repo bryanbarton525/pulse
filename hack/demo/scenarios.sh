@@ -23,8 +23,7 @@ kc() { "${KC[@]}" --request-timeout="$KUBECTL_TIMEOUT" "$@"; }
 
 demo_intro() {
   [ "$DEMO_TEACH" = 1 ] || return 0
-  kc -n pulse-system get --raw \
-    '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/results' >/dev/null
+  KUBECTL="${KUBECTL:-kubectl}" python3 hack/demo/demo_inspect.py raw results >/dev/null
   KUBECTL="${KUBECTL:-kubectl}" python3 hack/demo/demo_inspect.py overview
   printf '\nEach scenario now shows four things: the declared validation, the target mutation,\n'
   printf 'the live result/model decision, and the incident/action evidence. Assertions still\n'
@@ -88,8 +87,7 @@ wait_checks() {
 
 live_check_time() {
   local name=$1 payload
-  payload=$(kc -n pulse-system get --raw \
-    '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/results') || return
+  payload=$(KUBECTL="${KUBECTL:-kubectl}" python3 hack/demo/demo_inspect.py raw results) || return
   python3 -c 'import json,sys; payload=json.load(sys.stdin); name=sys.argv[1]; assert isinstance(payload,list), "results is not an array"; print(next((r.get("lastCheckTime", "") for r in payload if isinstance(r,dict) and r.get("name") == name), ""))' \
     "$NS_APP/$name" <<< "$payload"
 }
@@ -115,8 +113,7 @@ wait_result_after() {
 
 live_result_field() {
   local name=$1 field=$2 payload
-  payload=$(kc -n pulse-system get --raw \
-    '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/results') || return
+  payload=$(KUBECTL="${KUBECTL:-kubectl}" python3 hack/demo/demo_inspect.py raw results) || return
   python3 -c 'import json,sys; payload=json.load(sys.stdin); name,field=sys.argv[1:]; assert isinstance(payload,list), "results is not an array"; print(next((r.get(field, "") for r in payload if isinstance(r,dict) and r.get("name") == name), ""))' \
     "$NS_APP/$name" "$field" <<< "$payload"
 }

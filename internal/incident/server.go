@@ -1,16 +1,15 @@
 package incident
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/bryanbarton525/pulse/internal/authn"
 	"github.com/bryanbarton525/pulse/internal/observation"
 )
 
@@ -38,15 +37,11 @@ func NewAPIServeMux(
 	engine *Engine,
 	aggregator *Aggregator,
 	logger logr.Logger,
-	internalToken func() string,
+	auth authn.Policy,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
-	token := func() string { return "" }
-	if internalToken != nil {
-		token = internalToken
-	}
 	mux.HandleFunc("POST /observations", func(w http.ResponseWriter, r *http.Request) {
-		if !authorized(r, token()) {
+		if !auth.Authorized(r) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -64,7 +59,7 @@ func NewAPIServeMux(
 		w.WriteHeader(http.StatusAccepted)
 	})
 	mux.HandleFunc("POST /results", func(w http.ResponseWriter, r *http.Request) {
-		if !authorized(r, token()) {
+		if !auth.Authorized(r) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -81,21 +76,21 @@ func NewAPIServeMux(
 		w.WriteHeader(http.StatusAccepted)
 	})
 	mux.HandleFunc("GET /results", func(w http.ResponseWriter, r *http.Request) {
-		if !authorized(r, token()) {
+		if !auth.Authorized(r) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		writeJSON(w, logger, aggregator.Results())
 	})
 	mux.HandleFunc("GET /incidents", func(w http.ResponseWriter, r *http.Request) {
-		if !authorized(r, token()) {
+		if !auth.Authorized(r) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		writeJSON(w, logger, engine.Open())
 	})
 	mux.HandleFunc("GET /topology", func(w http.ResponseWriter, r *http.Request) {
-		if !authorized(r, token()) {
+		if !auth.Authorized(r) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -104,123 +99,6 @@ func NewAPIServeMux(
 		})
 	})
 	return mux
-}
-
-// NewServeMux builds the incident engine's HTTP surface.
-//
-// Mirrors the probe runner's server so both binaries look and behave the same:
-//
-//	POST /observations  a shard reporting failures, drift, and recoveries
-//	POST /results       a shard reporting its full result snapshot
-//	GET  /results       the merged view, polled by the controller's StatusSyncer
-//	GET  /incidents     open incidents, for status and for humans
-//	GET  /topology      learned dependency proposals awaiting review
-//	GET  /metrics       Prometheus
-//	GET  /healthz       liveness
-func NewServeMux(
-	engine *Engine,
-	aggregator *Aggregator,
-	logger logr.Logger,
-	gatherer prometheus.Gatherer,
-	internalToken ...func() string,
-) *http.ServeMux {
-	mux := http.NewServeMux()
-	token := func() string { return "" }
-	if len(internalToken) > 0 && internalToken[0] != nil {
-		token = internalToken[0]
-	}
-
-	mux.Handle("GET /metrics", promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{}))
-
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
-
-	mux.HandleFunc("POST /observations", func(w http.ResponseWriter, r *http.Request) {
-		if !authorized(r, token()) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		var batch observation.Batch
-		if !decode(w, r, logger, &batch) {
-			return
-		}
-
-		if len(batch.Observations) > maxObservationBatch {
-			http.Error(w, "observation batch too large", http.StatusRequestEntityTooLarge)
-			return
-		}
-		for _, signal := range batch.Observations {
-			engine.Ingest(r.Context(), signal)
-		}
-
-		w.WriteHeader(http.StatusAccepted)
-	})
-
-	mux.HandleFunc("POST /results", func(w http.ResponseWriter, r *http.Request) {
-		if !authorized(r, token()) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		var batch ResultBatch
-		if !decode(w, r, logger, &batch) {
-			return
-		}
-
-		if len(batch.Results) > maxResultBatch {
-			http.Error(w, "result batch too large", http.StatusRequestEntityTooLarge)
-			return
-		}
-		engine.ReconcileResults(batch.Results)
-		aggregator.Record(batch)
-		w.WriteHeader(http.StatusAccepted)
-	})
-
-	mux.HandleFunc("GET /results", func(w http.ResponseWriter, r *http.Request) {
-		if !authorized(r, token()) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		writeJSON(w, logger, aggregator.Results())
-	})
-
-	mux.HandleFunc("GET /incidents", func(w http.ResponseWriter, r *http.Request) {
-		if !authorized(r, token()) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		writeJSON(w, logger, engine.Open())
-	})
-
-	mux.HandleFunc("GET /topology", func(w http.ResponseWriter, r *http.Request) {
-		if !authorized(r, token()) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		writeJSON(w, logger, map[string]any{
-			// Declared edges are what actually drives correlation; proposals
-			// are hypotheses awaiting a human. Keeping them in separate fields
-			// makes that distinction impossible to miss.
-			"declared":  engine.DeclaredEdges(),
-			"proposals": engine.Proposals(),
-		})
-	})
-
-	return mux
-}
-
-func authorized(request *http.Request, token string) bool {
-	if token == "" {
-		// Preserve local-development and unit-test behavior when no shared token
-		// was configured. Production reconciliation always creates one.
-		return true
-	}
-	provided := strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer ")
-	if len(provided) != len(token) {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(provided), []byte(token)) == 1
 }
 
 func decode(w http.ResponseWriter, r *http.Request, logger logr.Logger, target any) bool {

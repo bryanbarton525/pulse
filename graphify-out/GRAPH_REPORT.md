@@ -1,13 +1,18 @@
-# Graph Report - .  (2026-09-09)
+# Graph Report - pulse  (2026-09-09)
 
 ## Corpus Check
-- 230 files · ~266,432 words
+- 168 files · ~270,671 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1961 nodes · 3634 edges · 192 communities (122 shown, 70 thin omitted)
-- Extraction: 90% EXTRACTED · 10% INFERRED · 0% AMBIGUOUS · INFERRED: 353 edges (avg confidence: 0.8)
+- 2450 nodes · 4230 edges · 227 communities (156 shown, 71 thin omitted)
+- Extraction: 91% EXTRACTED · 9% INFERRED · 0% AMBIGUOUS · INFERRED: 372 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
+
+## Graph Freshness
+- Built from commit: `b5bf70db`
+- Run `git rev-parse HEAD` and compare to check if the graph is stale.
+- Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
 - [[_COMMUNITY_now Subsystem|now Subsystem]]
@@ -197,15 +202,50 @@
 - [[_COMMUNITY_g RPC Canary Viewer Role|g RPC Canary Viewer Role]]
 - [[_COMMUNITY_g RPC Health Sample Canary|g RPC Health Sample Canary]]
 - [[_COMMUNITY_Unit and Envtest CI|Unit and Envtest CI]]
+- [[_COMMUNITY_Community 192|Community 192]]
+- [[_COMMUNITY_Community 193|Community 193]]
+- [[_COMMUNITY_Community 194|Community 194]]
+- [[_COMMUNITY_Community 195|Community 195]]
+- [[_COMMUNITY_Community 196|Community 196]]
+- [[_COMMUNITY_Community 197|Community 197]]
+- [[_COMMUNITY_Community 198|Community 198]]
+- [[_COMMUNITY_Community 199|Community 199]]
+- [[_COMMUNITY_Community 200|Community 200]]
+- [[_COMMUNITY_Community 201|Community 201]]
+- [[_COMMUNITY_Community 202|Community 202]]
+- [[_COMMUNITY_Community 203|Community 203]]
+- [[_COMMUNITY_Community 204|Community 204]]
+- [[_COMMUNITY_Community 205|Community 205]]
+- [[_COMMUNITY_Community 206|Community 206]]
+- [[_COMMUNITY_Community 207|Community 207]]
+- [[_COMMUNITY_Community 208|Community 208]]
+- [[_COMMUNITY_Community 209|Community 209]]
+- [[_COMMUNITY_Community 210|Community 210]]
+- [[_COMMUNITY_Community 211|Community 211]]
+- [[_COMMUNITY_Community 212|Community 212]]
+- [[_COMMUNITY_Community 213|Community 213]]
+- [[_COMMUNITY_Community 214|Community 214]]
+- [[_COMMUNITY_Community 215|Community 215]]
+- [[_COMMUNITY_Community 216|Community 216]]
+- [[_COMMUNITY_Community 217|Community 217]]
+- [[_COMMUNITY_Community 218|Community 218]]
+- [[_COMMUNITY_Community 219|Community 219]]
+- [[_COMMUNITY_Community 220|Community 220]]
+- [[_COMMUNITY_Community 221|Community 221]]
+- [[_COMMUNITY_Community 222|Community 222]]
+- [[_COMMUNITY_Community 223|Community 223]]
+- [[_COMMUNITY_Community 224|Community 224]]
+- [[_COMMUNITY_Community 225|Community 225]]
+- [[_COMMUNITY_Community 226|Community 226]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `Runner` - 51 edges
 2. `Engine` - 45 edges
 3. `testIncident()` - 32 edges
-4. `Intelligence` - 30 edges
-5. `probeWithCorrelation()` - 29 edges
-6. `newTestEngine()` - 29 edges
-7. `T` - 29 edges
+4. `T` - 30 edges
+5. `Intelligence` - 30 edges
+6. `probeWithCorrelation()` - 29 edges
+7. `newTestEngine()` - 29 edges
 8. `failure()` - 24 edges
 9. `captureServer()` - 23 edges
 10. `waitForIncidents()` - 22 edges
@@ -239,7 +279,7 @@
 - **Demo action endpoints** — demo_05_sink_openai_compatible_fixture_endpoint, demo_05_sink_slack_webhook_recorder, demo_05_sink_datadog_intake_recorder [EXTRACTED 1.00]
 - **Pulse Visual Identity** — docs_logo_monitoring_waveform, docs_logo_connected_system_graph, docs_logo_successful_health_check, docs_logo_blue_green_observability_palette [EXTRACTED 1.00]
 
-## Communities (192 total, 70 thin omitted)
+## Communities (227 total, 71 thin omitted)
 
 ### Community 0 - "now Subsystem"
 Cohesion: 0.06
@@ -247,15 +287,15 @@ Nodes (56): fixedClock, newTestThrottle(), TestThrottleAllowsFirstThenBlocksWith
 
 ### Community 1 - "build Probe Config"
 Cohesion: 0.06
-Nodes (60): buildProbeConfig(), buildProbeMCP(), buildProbeOutputs(), parseQuantity(), probeCredentialID(), TestBuildProbeConfigIncludesJourneyFields(), TestPopulateProbeAuthResolvesBearerCredentials(), TestPopulateProbeAuthSetsConfigErrorWhenSecretIsMissing() (+52 more)
+Nodes (62): buildProbeConfig(), buildProbeMCP(), buildProbeOutputs(), parseQuantity(), probeCredentialID(), TestBuildProbeConfigIncludesJourneyFields(), TestPopulateProbeAuthResolvesBearerCredentials(), TestPopulateProbeAuthSetsConfigErrorWhenSecretIsMissing() (+54 more)
 
 ### Community 2 - "Engine Subsystem"
 Cohesion: 0.06
 Nodes (43): Candidate, Dispatcher, Engine, EngineOptions, Incident, computeSignature(), Member, Evaluate() (+35 more)
 
 ### Community 3 - "engine test go"
-Cohesion: 0.11
-Nodes (46): blockingNoveltyEmbedder, NewEngine(), failure(), newTestEngine(), probeWithCorrelation(), TestChangedTriggerNotifiesAgain(), TestDispatchSurvivesACancelledIngestContext(), TestEngineClosesDriftIncidentWhenDriftStops() (+38 more)
+Cohesion: 0.10
+Nodes (48): blockingNoveltyEmbedder, NewEngine(), failure(), newTestEngine(), probeWithCorrelation(), TestChangedTriggerNotifiesAgain(), TestDispatchSurvivesACancelledIngestContext(), TestEngineClosesDriftIncidentWhenDriftStops() (+40 more)
 
 ### Community 4 - "Caching Embedder"
 Cohesion: 0.06
@@ -274,8 +314,8 @@ Cohesion: 0.10
 Nodes (38): directShipper, anomalyNormalizer(), driftConfig(), newDriftDetector(), newSeededRandom(), correlatingProbe(), failing(), newPipeline() (+30 more)
 
 ### Community 8 - "Status Syncer"
-Cohesion: 0.09
-Nodes (22): resourceDefaults, anyProbeUsesIntelligence(), hasManagedLabels(), probeRunnerShards(), probeVolumes(), quantityOrDefault(), resolveResources(), EventRecorder (+14 more)
+Cohesion: 0.10
+Nodes (23): resourceDefaults, applyResultStatus(), hasManagedLabels(), probeRunnerShards(), probeVolumes(), quantityOrDefault(), resolveResources(), EventRecorder (+15 more)
 
 ### Community 9 - "Intelligence Subsystem"
 Cohesion: 0.11
@@ -303,15 +343,15 @@ Nodes (27): Context, Embedder, Intelligence, Mutex, Observation, Probe, ProbeRes
 
 ### Community 15 - "Aggregator Subsystem"
 Cohesion: 0.12
-Nodes (21): NewAggregator(), result(), TestAggregatorBoundsHistoryForRemovedProbes(), TestAggregatorComputesLiveAgeWithItsOwnClock(), TestAggregatorForgetsSilentShards(), TestAggregatorHandlesUnnamedShard(), TestAggregatorKeepsHistoryWhileProbeMovesShards(), TestAggregatorMergesEveryShardWithoutLossOrDuplication() (+13 more)
+Nodes (24): NewAggregator(), result(), TestAggregatorBoundsHistoryForRemovedProbes(), TestAggregatorComputesLiveAgeWithItsOwnClock(), TestAggregatorForgetsSilentShards(), TestAggregatorHandlesUnnamedShard(), TestAggregatorKeepsHistoryWhileProbeMovesShards(), TestAggregatorMergesEveryShardWithoutLossOrDuplication() (+16 more)
 
 ### Community 16 - "build Cold Embedder"
-Cohesion: 0.14
-Nodes (25): AuthStore, Embedder, Logger, Probe, AuthStore, Embedder, Logger, Mutex (+17 more)
+Cohesion: 0.16
+Nodes (23): Embedder, Probe, AuthStore, Embedder, Logger, Mutex, Probe, ProbeColdModel (+15 more)
 
 ### Community 17 - "config go"
 Cohesion: 0.07
-Nodes (28): ProbeColdModel, ProbeDependency, ProbeHotModel, ProbeLLMAction, ProbeObservabilityAction, ProbeSlackAction, ProbeHTTPEmbedModel, ProbeONNXModel (+20 more)
+Nodes (28): Probe, ProbeColdModel, ProbeDependency, ProbeHotModel, ProbeHTTPEmbedModel, ProbeONNXModel, AuthStore, LoadAuthStoreFromFile() (+20 more)
 
 ### Community 18 - "Deep Copy Into"
 Cohesion: 0.10
@@ -330,8 +370,8 @@ Cohesion: 0.10
 Nodes (7): Object, AnomalyPolicyList, GrpcCanary, GrpcCanaryList, HttpCanary, HttpCanaryList, TriggerTuning
 
 ### Community 22 - "sync Incidents"
-Cohesion: 0.17
-Nodes (15): boolPointerEqual(), buildIntelligenceViews(), inferredEqual(), intelligenceStatusEqual(), policyKey(), viewStatus(), intelligenceView, InferredDependency (+7 more)
+Cohesion: 0.13
+Nodes (21): boolPointerEqual(), buildIntelligenceViews(), inferredEqual(), intelligenceStatusEqual(), intelligenceStatusNeedsUpdate(), policyKey(), viewStatus(), intelligenceView (+13 more)
 
 ### Community 23 - "httpcanary types go"
 Cohesion: 0.13
@@ -346,8 +386,8 @@ Cohesion: 0.19
 Nodes (19): chatMessage, chatRequest, chatResponse, HistoryLookup, NewLLMAction(), describeProbes(), TestLLMPromptDescribesEveryMemberAndTopology(), TestLLMPromptExcludesCredentials() (+11 more)
 
 ### Community 26 - "New HTTPEmbedder"
-Cohesion: 0.15
-Nodes (15): embeddingsRequest, embeddingsResponse, NewHTTPEmbedder(), TestHTTPEmbedderOmitsAuthorizationWithoutAPIKey(), TestHTTPEmbedderRejectsMismatchedResultCount(), TestHTTPEmbedderReordersByIndex(), TestHTTPEmbedderSendsOpenAICompatibleRequest(), TestHTTPEmbedderSurfacesEndpointErrors() (+7 more)
+Cohesion: 0.13
+Nodes (23): embeddingsRequest, embeddingsResponse, finiteEmbedding(), NewHTTPEmbedder(), TestHTTPEmbedderConcurrentFirstRequest(), TestHTTPEmbedderOmitsAuthorizationWithoutAPIKey(), TestHTTPEmbedderRejectsDimensionChange(), TestHTTPEmbedderRejectsInvalidIndexesAndDimensions() (+15 more)
 
 ### Community 27 - "new Test Dispatcher"
 Cohesion: 0.34
@@ -366,20 +406,20 @@ Cohesion: 0.24
 Nodes (18): captured, NewObservabilityAction(), fireObservability(), testIncident(), TestNewObservabilityActionRejectsBadConfiguration(), TestObservabilityDatadogShape(), TestObservabilityDatadogUsesWarningForPassingChecks(), TestObservabilityElasticsearchShape() (+10 more)
 
 ### Community 31 - "ONNXEmbedder Subsystem"
-Cohesion: 0.12
-Nodes (13): B, DynamicAdvancedSession, normalizeInPlace(), initONNXRuntime(), LoadONNX(), ONNXEmbedder, BenchmarkRealPotionEmbed(), Int64 (+5 more)
+Cohesion: 0.15
+Nodes (10): B, DynamicAdvancedSession, normalizeInPlace(), ONNXEmbedder, BenchmarkRealPotionEmbed(), Int64, Context, Mutex (+2 more)
 
 ### Community 32 - "Default Deployment Bundle"
 Cohesion: 0.14
 Nodes (19): AnomalyPolicy CRD, GrpcCanary CRD, HttpCanary CRD, Pulse CRD Bundle, Certificate-Backed Metrics Patch, Default Deployment Bundle, HTTPS Metrics Endpoint Patch, Controller Metrics Service (+11 more)
 
 ### Community 33 - "capture Server"
-Cohesion: 0.26
-Nodes (17): defaultClient(), captureServer(), NewSlackAction(), TestNewSlackActionRejectsBadTemplate(), TestSlackBotTokenPostsToEachChannel(), TestSlackCustomTemplate(), TestSlackDetectsPostMessageFailureBehindHTTP200(), TestSlackDriftMessageReadsAsStillPassing() (+9 more)
+Cohesion: 0.35
+Nodes (14): captureServer(), NewSlackAction(), TestNewSlackActionRejectsBadTemplate(), TestSlackBotTokenPostsToEachChannel(), TestSlackCustomTemplate(), TestSlackDetectsPostMessageFailureBehindHTTP200(), TestSlackDriftMessageReadsAsStillPassing(), TestSlackIncludesInvestigationWhenRequested() (+6 more)
 
 ### Community 34 - "demo inspect py"
-Cohesion: 0.31
-Nodes (16): cell(), detector(), kubectl_json(), live_results(), live_state(), main(), print_canary(), print_incidents() (+8 more)
+Cohesion: 0.27
+Nodes (19): api_forward(), cell(), detector(), internal_token(), kubectl_json(), live_results(), live_state(), main() (+11 more)
 
 ### Community 35 - "Novelty Index"
 Cohesion: 0.23
@@ -390,8 +430,8 @@ Cohesion: 0.20
 Nodes (13): Cmd, setupCertManager(), teardownCertManager(), TestE2E(), T, GetNonEmptyLines(), GetProjectDir(), InstallCertManager() (+5 more)
 
 ### Community 37 - "apply Config"
-Cohesion: 0.23
-Nodes (14): Aggregator, Context, Dispatcher, Engine, InternalToken, ProbeConfig, Selector, labelSelector (+6 more)
+Cohesion: 0.18
+Nodes (17): Aggregator, AuthStore, Context, Dispatcher, Engine, InternalToken, Logger, ProbeConfig (+9 more)
 
 ### Community 38 - "test Potion"
 Cohesion: 0.33
@@ -402,8 +442,8 @@ Cohesion: 0.38
 Nodes (14): defaultDriftConfig(), potionVector(), TestDriftBaselineDoesNotAbsorbSustainedChange(), TestDriftBaselineTracksGradualChange(), TestDriftDebounceResetsOnRecovery(), TestDriftDetectsChangedBodyAfterDebounce(), TestDriftIsolatesProbesFromEachOther(), TestDriftResetsBaselineWhenEmbeddingSpaceChanges() (+6 more)
 
 ### Community 40 - "main Subsystem"
-Cohesion: 0.17
-Nodes (14): Context, Intelligence, InternalToken, Probe, Runner, hotModelState, Probe, AuthStore (+6 more)
+Cohesion: 0.24
+Nodes (9): Context, Intelligence, InternalToken, Probe, Runner, hotModelState, anyProbeWantsIntelligence(), main() (+1 more)
 
 ### Community 41 - "test Tokenizer"
 Cohesion: 0.32
@@ -418,16 +458,16 @@ Cohesion: 0.19
 Nodes (12): CanaryIntelligence, CanaryIntelligenceStatus, Condition, HttpCanaryOutput, ListMeta, ObjectMeta, Time, TypeMeta (+4 more)
 
 ### Community 44 - "Cosine Subsystem"
-Cohesion: 0.26
-Nodes (10): Cosine(), TestCosineHandlesZeroVector(), TestCosineIdenticalAndOpposite(), TestCosinePanicsOnLengthMismatch(), TestCosinePanicsOnSpaceMismatch(), TestNormalizeInPlace(), Embedder, ErrSpaceMismatch (+2 more)
+Cohesion: 0.23
+Nodes (11): Cosine(), NormalizedEndpoint(), TestCosineHandlesZeroVector(), TestCosineIdenticalAndOpposite(), TestCosinePanicsOnLengthMismatch(), TestCosinePanicsOnSpaceMismatch(), TestNormalizeInPlace(), Embedder (+3 more)
 
 ### Community 45 - "New Internal Token"
 Cohesion: 0.21
 Nodes (9): RWMutex, Request, Response, T, authRoundTripFunc, NewInternalToken(), InternalToken, TestHTTPShipperAuthenticatesObservationPush() (+1 more)
 
 ### Community 46 - "New Runner"
-Cohesion: 0.35
-Nodes (12): Logger, Registerer, T, newHTTPClient(), NewRunner(), TestExecuteCheckStdoutOnlySkipsPrometheusAndWritesJSON(), TestExecuteJourneyReusesCookiesAcrossSteps(), TestExecuteMCPProbeReportsMissingRequiredTool() (+4 more)
+Cohesion: 0.22
+Nodes (15): AuthStore, Logger, Registerer, T, T, newHTTPClient(), NewRunner(), TestExecuteCheckStdoutOnlySkipsPrometheusAndWritesJSON() (+7 more)
 
 ### Community 47 - "LLMAction Subsystem"
 Cohesion: 0.20
@@ -438,15 +478,15 @@ Cohesion: 0.24
 Nodes (10): effectiveModels, coldModelLabel(), hotModelLabel(), setModelCondition(), AnomalyPolicy, Context, CanaryReconciler, Probe (+2 more)
 
 ### Community 49 - "New Serve Mux"
-Cohesion: 0.27
-Nodes (11): authorized(), decode(), NewServeMux(), writeJSON(), Aggregator, Engine, Gatherer, Logger (+3 more)
+Cohesion: 0.24
+Nodes (12): decode(), NewAPIServeMux(), NewMetricsServeMux(), writeJSON(), Aggregator, Engine, Gatherer, Logger (+4 more)
 
 ### Community 50 - "Probe Result"
-Cohesion: 0.41
-Nodes (4): Client, Probe, Time, ProbeResult
+Cohesion: 0.23
+Nodes (9): Client, Probe, ProbeAuth, Request, Time, jsonRPCRequest, jsonRPCResponse, ProbeResult (+1 more)
 
 ### Community 51 - "Show Actions Tests"
-Cohesion: 0.29
+Cohesion: 0.23
 Nodes (3): InspectTests, record(), ShowActionsTests
 
 ### Community 52 - "Load Potion"
@@ -458,7 +498,7 @@ Cohesion: 0.38
 Nodes (10): convert_potion(), download(), main(), Flatten a HuggingFace tokenizer.json into a line-indexed vocab.txt.      The Go, Return (name, dtype, shape, raw_bytes) for the largest 2-D tensor.      Model2Ve, read_safetensors(), sha256(), to_float32() (+2 more)
 
 ### Community 54 - "Window Subsystem"
-Cohesion: 0.27
+Cohesion: 0.24
 Nodes (6): Window, NewWindow(), Candidate, Duration, Mutex, Time
 
 ### Community 55 - "Distance Subsystem"
@@ -466,16 +506,16 @@ Cohesion: 0.47
 Nodes (9): Distance(), loadRealPotion(), realModelPaths(), TestRealPotionModelLoads(), TestRealPotionModelOrdersFailureTextSemantically(), TestRealPotionModelScoresIdenticalBodiesAtZero(), TestRealPotionModelSeparatesSilentFailureFromNormal(), PotionEmbedder (+1 more)
 
 ### Community 56 - "Reload Subsystem"
-Cohesion: 0.33
-Nodes (4): AuthStore, Context, Duration, ProbeConfig
+Cohesion: 0.43
+Nodes (3): Context, Duration, ProbeConfig
 
 ### Community 57 - "Word Piece"
 Cohesion: 0.42
 Nodes (5): EncodeOptions, WordPiece, isCJK(), isPunctuation(), stripAccents()
 
 ### Community 58 - "do JSONRPCRequest"
-Cohesion: 0.28
-Nodes (5): ProbeAuth, Request, jsonRPCRequest, jsonRPCResponse, normalizeMethod()
+Cohesion: 0.06
+Nodes (32): After Making Changes, Always Use CLI Commands, API Design, API Design & Implementation, CLI Commands Cheat Sheet, Controller Design, Controller for Core Kubernetes Types, Controller for External Types (e.g., from other operators) (+24 more)
 
 ### Community 59 - "shard Server"
 Cohesion: 0.50
@@ -507,7 +547,7 @@ Nodes (6): devDependencies, mermaid, name, private, scripts, assets
 
 ### Community 66 - "Pulse Book Learning Path"
 Cohesion: 0.29
-Nodes (7): Pulse Debugging Guide, Pulse Book Delivery Plan, Pulse Kubernetes Operator, Pulse Book Learning Path, Documentation CI, Image and Release Pipeline, Helm Integration Test
+Nodes (7): Pulse debugging guide, Pulse Book Delivery Plan, Pulse Kubernetes Operator, Pulse Book Learning Path, Documentation CI, Image and Release Pipeline, Helm Integration Test
 
 ### Community 67 - "Complete demo canary set"
 Cohesion: 0.38
@@ -550,16 +590,16 @@ Cohesion: 0.33
 Nodes (6): ProbeAuth, ProbeIntelligence, ProbeMCP, Probe, ProbeOutput, ProbeStep
 
 ### Community 77 - "New Serve Mux 77"
-Cohesion: 0.33
-Nodes (5): Gatherer, Logger, Runner, ServeMux, NewServeMux()
+Cohesion: 0.32
+Nodes (7): Gatherer, Logger, Policy, Runner, ServeMux, NewAPIServeMux(), NewMetricsServeMux()
 
 ### Community 78 - "Demo recording sink"
 Cohesion: 0.60
 Nodes (5): Datadog intake recorder, Demo recording sink, Deterministic incident assessment, OpenAI-compatible fixture endpoint, Slack webhook recorder
 
 ### Community 80 - "Pulse architecture"
-Cohesion: 0.60
-Nodes (5): Optional incident engine, Probe runner StatefulSet, Pulse architecture, Single reconcile key, StatusSyncer background polling
+Cohesion: 0.15
+Nodes (15): CanaryReconciler (`internal/controller/canary_controller.go`), Component Responsibilities, Components, Controller Manager (`cmd/main.go`), Data Flow, Key Design Decisions, Namespace Model, Optional incident engine (+7 more)
 
 ### Community 81 - "Pulse CRD design"
 Cohesion: 0.40
@@ -586,8 +626,8 @@ Cohesion: 0.40
 Nodes (5): ProbeFailureCorrelationTrigger, ProbeBodyDriftTrigger, ProbeFailureNoveltyTrigger, ProbeLatencyShiftTrigger, ProbeTriggers
 
 ### Community 87 - "emit Result"
-Cohesion: 0.50
-Nodes (3): ProbeOutput, shouldEmitPrometheus(), shouldEmitStdout()
+Cohesion: 0.29
+Nodes (4): ProbeOutput, shouldEmitPrometheus(), shouldEmitStdout(), TestShouldEmitPrometheusDefaultsToTrue()
 
 ### Community 88 - "Incident action laboratory"
 Cohesion: 0.70
@@ -630,24 +670,24 @@ Cohesion: 0.50
 Nodes (4): HTTP journey canary guide, Journey status projection, Ordered HTTP steps, Per-cycle cookie sharing
 
 ### Community 99 - "Pulse operations guide"
-Cohesion: 0.50
-Nodes (4): Canary status troubleshooting, Observability expectations, Pulse operations guide, Runtime resource inspection
+Cohesion: 0.15
+Nodes (13): Canary status is `Unhealthy`, Canary status troubleshooting, Common Failure Cases, CRD installed but no runtime resources, In-Cluster Validation Flow, Local Controller Against a Cluster, Namespaces and Resources, Observability Expectations (+5 more)
 
 ### Community 100 - "Reconciliation design"
-Cohesion: 0.50
-Nodes (4): All-canary desired state generation, Reconcile excludes probe execution, Reconciliation design, Single work queue key
+Cohesion: 0.13
+Nodes (15): All-canary desired state generation, Config generation failure, Current Constraints, Desired State Generation, Failure Modes, Goals, Likely Next Design Steps, Managed Resources (+7 more)
 
 ### Community 101 - "Pulse scaling design"
 Cohesion: 0.50
 Nodes (4): Horizontal probe sharding, Pulse scaling design, Reconcile storm avoidance, Status write amplification avoidance
 
 ### Community 102 - "Testing and validation guide"
-Cohesion: 0.50
-Nodes (4): Isolated Kind E2E, Manual smoke validation, Testing and validation guide, Unit and envtest suite
+Cohesion: 0.17
+Nodes (12): Automated Checks, E2E on isolated Kind cluster, Isolated Kind E2E, Linting, Local Validation Path, Manual Cluster Validation, Manual smoke validation, Recommended Smoke Test (+4 more)
 
 ### Community 105 - "Intelligence experiment matrix"
-Cohesion: 0.50
-Nodes (4): Independent validation checks, Intelligence experiment matrix, Mutation recovery cycle, Protocol and intelligence matrix
+Cohesion: 0.20
+Nodes (10): Checkpoint, Exact mutation and independent-check commands, Failure symptoms and bounded recovery, Independent validation checks, Intelligence experiment matrix, Learning objective, Matrix, Mutation recovery cycle (+2 more)
 
 ### Community 106 - "First canary laboratory"
 Cohesion: 0.83
@@ -670,12 +710,12 @@ Cohesion: 0.50
 Nodes (4): Book development workflow, Bundled Mermaid assets, Documentation handoff discipline, Pinned mdBook build
 
 ### Community 111 - "Documentation inventory and provenance"
-Cohesion: 0.50
-Nodes (4): Canonical documentation ownership, Command and diagram provenance, Documentation inventory and provenance, Runtime evidence classification
+Cohesion: 0.33
+Nodes (5): Canonical documentation ownership, Command and diagram provenance, Documentation inventory and provenance, Runtime evidence classification, Source inventory
 
 ### Community 112 - "Optional model intelligence"
-Cohesion: 0.83
-Nodes (4): Deterministic monitoring contracts, Evidence is not causation, Optional model intelligence, The Pulse Book
+Cohesion: 0.17
+Nodes (10): Create your laboratory, Inspect the empty environment, Stop or continue, Write the cluster configuration, Deterministic monitoring contracts, Evidence is not causation, Optional model intelligence, The Pulse Book (+2 more)
 
 ### Community 113 - "Automated quick start"
 Cohesion: 0.50
@@ -709,25 +749,161 @@ Nodes (3): Potion embedding inputs, Potion subword tokens, Potion tokenizer voca
 Cohesion: 0.67
 Nodes (3): Minimal Basic Triage Policy, Production Triage Anomaly Policy, Intelligent Payments Canary
 
+### Community 169 - "Architecture reference"
+Cohesion: 0.25
+Nodes (6): Follow a configuration change, Four decisions that must not be confused, State and freshness, Understand the components, Architecture reference, Controller runner engine architecture
+
+### Community 192 - "Community 192"
+Cohesion: 0.07
+Nodes (26): Checkpoint 1 — Preserve review evidence, Checkpoint 2 — Harden remote embeddings, Checkpoint 3 — Correct status lifecycle, Checkpoint 4 — Authenticate internal reads, Checkpoint 5 — Restore publishing, Checkpoint 6 — Documentation and dependency closure, Constraints and cautions, Definition of done (+18 more)
+
+### Community 193 - "Community 193"
+Cohesion: 0.10
+Nodes (8): Build and contribute to this book, Helm deployment, Access authenticated operational APIs, Reconciliation design, Scaling and sharding, Operate and contribute, Summary, Testing and validation
+
+### Community 194 - "Community 194"
+Cohesion: 0.09
+Nodes (22): Actions, Building, Cluster Validation, Correlation is evidence-gated, Documentation, Example, Getting started, Helm Deploy (+14 more)
+
+### Community 195 - "Community 195"
+Cohesion: 0.10
+Nodes (19): Acceptance matrix, Assignment and working state, Confirmed findings, Delivery sequence, Documentation and learning experience requirements, Evidence and validation history, F01 — Demo commands can operate on the wrong cluster (P1), F02 — Recovery and convergence checks can give false success or false failure (P1) (+11 more)
+
+### Community 196 - "Community 196"
+Cohesion: 0.12
+Nodes (17): Adding a New CRD, Build, Check CR status, Check CRD is installed, Code Generation, Common Tasks, Controller logs, Debugging (+9 more)
+
+### Community 197 - "Community 197"
+Cohesion: 0.13
+Nodes (15): Adding a New CRD, API Group, CRD Design, Design Principles, Example CR, HttpCanary, HttpCanaryAuth Fields, HttpCanaryMCP Fields (+7 more)
+
+### Community 198 - "Community 198"
+Cohesion: 0.13
+Nodes (14): 0. Establish the implementation and delivery branch, 1. Close the API authorization review findings, 2. Complete status synchronization correctness, 3. Repair the operator workflows before E2E, 4. Finish authenticated-boundary integration coverage, 5. Update findings and review evidence, 6. Post-merge release and dependency closure, Implementation sequence (+6 more)
+
+### Community 199 - "Community 199"
+Cohesion: 0.24
+Nodes (3): Architecture Summary, Components, Data Flow
+
+### Community 200 - "Community 200"
+Cohesion: 0.17
+Nodes (12): Applying And Inspecting, Authoring Guidelines, Example: JSON API Workflow, Example: Login Journey, HTTP Journey Canary, Journey Step Fields, Runtime Semantics, Supported Fields (+4 more)
+
+### Community 201 - "Community 201"
+Cohesion: 0.17
+Nodes (11): 1. Reconcile Storm (N reconciles per batch), 2. Status Sync Amplification (N^2 writes per interval), 3. Unnecessary Status Writes (writes without changes), ConfigMap Size Limits, Current Scaling Profile, Failure Modes at Scale, Future Scaling Considerations, Informer Memory (+3 more)
+
+### Community 202 - "Community 202"
+Cohesion: 0.17
+Nodes (12): Add a meaningful envtest regression, Build, load, and replay manually, Change one supported validation, Checkpoint, Delete exactly this lab, Failure symptoms and bounded recovery, Inspect the already-merged HTTP bound, Learning objective (+4 more)
+
+### Community 203 - "Community 203"
+Cohesion: 0.20
+Nodes (9): Alternative Helm Commands, Basic Install, Chart Location, Create Probes, Expected Result, Helm Example With Direct Values, Helm Guide, Private GHCR Install (+1 more)
+
+### Community 204 - "Community 204"
+Cohesion: 0.20
+Nodes (10): Application health failure: NOT_SERVING, Checkpoint exercise, Configure Pulse, Current protocol boundary, Objective, Prerequisites and starting state, Probe named gRPC health, Query the named service independently (+2 more)
+
+### Community 205 - "Community 205"
+Cohesion: 0.20
+Nodes (9): Checkpoint exercise, Extend an HTTP contract, Fixed behavior and unsupported knobs, Inspect the target first, Introduce and inspect an assertion failure, Objective, Prerequisites and starting state, Restore (+1 more)
+
+### Community 206 - "Community 206"
+Cohesion: 0.20
+Nodes (9): Checkpoint exercise, Configure Pulse, Current protocol boundary, Exchange the protocol manually, Objective, Prerequisites and starting state, Remove a required tool, Restore (+1 more)
+
+### Community 207 - "Community 207"
+Cohesion: 0.22
+Nodes (8): Checkpoint, Failure symptoms and bounded recovery, Inspect the actual payloads and counts, Learning objective, Prerequisites and starting state, Trace incident actions into a local recording sink, Trigger one isolated failure, Write credentials and ordered actions
+
+### Community 208 - "Community 208"
+Cohesion: 0.22
+Nodes (8): A bodyless 204 contract, A two-step session, Check 204 responses and cookie journeys, Checkpoint exercise, Fail and identify one step, Objective, Prerequisites and starting state, Restore
+
+### Community 209 - "Community 209"
+Cohesion: 0.22
+Nodes (9): Capture the first occurrence, Checkpoint, Failure symptoms and bounded recovery, Learning objective, Prerequisites and starting state, Recover completely, Replay a failure and classify novelty, Replay the identical shape (+1 more)
+
+### Community 210 - "Community 210"
+Cohesion: 0.22
+Nodes (8): Attach the policy and add an override, Checkpoint, Failure symptoms and bounded recovery, Inspect effective configuration and evidence, Learning objective, Opt a canary into intelligence, Prerequisites and starting state, Write the policy
+
+### Community 211 - "Community 211"
+Cohesion: 0.25
+Nodes (8): Checkpoint, Correlate failures into incidents, Declared topology with a negative control, Failure symptoms and bounded recovery, Inspect onsets, membership, and proposals, Learning objective, Prerequisites and starting state, Similarity-only MiniLM correlation
+
+### Community 212 - "Community 212"
+Cohesion: 0.25
+Nodes (8): Apply the policy and canaries, Bounded recovery, Build and load the engine, Deploy inspectable fixtures, Install the intelligence runtime, Objective, Prerequisites and starting state, Prove both models loaded
+
+### Community 213 - "Community 213"
+Cohesion: 0.25
+Nodes (8): Add two seconds without breaking the contract, Checkpoint, Detect latency shifts with EWMA statistics, Failure symptoms and bounded recovery, Learning objective, Prerequisites and starting state, Wait for readiness and inspect the baseline output, Why the detector works
+
+### Community 214 - "Community 214"
+Cohesion: 0.25
+Nodes (8): Checkpoint, Detect passing-body drift with Potion, Failure symptoms and bounded recovery, Introduce a green semantic change, Learning objective, Prerequisites and starting state, Understand what is learned, Wait for a real baseline
+
+### Community 215 - "Community 215"
+Cohesion: 0.25
+Nodes (8): Checkpoint, Configure two stable shards, Degrade safely and shard probe ownership, Failure symptoms and bounded recovery, Learning objective, Make both embedding models unavailable, Observe stale and missing results, Prerequisites and starting state
+
+### Community 216 - "Community 216"
+Cohesion: 0.29
+Nodes (6): Convert Potion for the runner, Download the four source files, Identify the immutable inputs, Prepare the model artifacts, Prove the cold-path model on Linux, Prove the hot-path model is real
+
+### Community 217 - "Community 217"
+Cohesion: 0.33
+Nodes (5): ADR 0001: Separate metrics from the authenticated internal API, Consequences, Context, Decision, Status
+
+### Community 218 - "Community 218"
+Cohesion: 0.40
+Nodes (4): SpaceIdentity(), initONNXRuntime(), LoadONNX(), Embedder
+
+### Community 219 - "Community 219"
+Cohesion: 0.33
+Nodes (5): Build the processes you will run, Inspect and render the installation, Install the controller by hand, Load the images into the node, Teach the API server the resource types
+
+### Community 220 - "Community 220"
+Cohesion: 0.60
+Nodes (4): TestPolicyAuthorized(), TestPolicyFailsClosedAndSupportsExplicitLocalMode(), TestPolicyReadsRotatedTokenForEveryRequest(), T
+
+### Community 221 - "Community 221"
+Cohesion: 0.40
+Nodes (4): Cause a failure by changing the assertion, Define the contract, Deploy a target you can inspect, Write and break your first canary
+
+### Community 223 - "Community 223"
+Cohesion: 0.50
+Nodes (4): ProbeLLMAction, ProbeObservabilityAction, ProbeSlackAction, ProbeAction
+
+### Community 224 - "Community 224"
+Cohesion: 0.50
+Nodes (4): Actions, resilience, and contribution, Environment and deterministic monitoring, Intelligence from first principles, Learn Pulse
+
+### Community 225 - "Community 225"
+Cohesion: 0.67
+Nodes (3): defaultClient(), Client, Duration
+
 ## Knowledge Gaps
-- **471 isolated node(s):** `install.sh script`, `PATH`, `GOTOOLCHAIN`, `kind-up.sh script`, `start.sh script` (+466 more)
+- **795 isolated node(s):** `install.sh script`, `PATH`, `GOTOOLCHAIN`, `kind-up.sh script`, `start.sh script` (+790 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **70 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **71 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
+- **Why does `main()` connect `main Subsystem` to `apply Config`, `Intelligence Subsystem`, `New Internal Token`, `New Runner`, `HTTPShipper Subsystem`, `config go`, `shard test go`?**
+  _High betweenness centrality (0.094) - this node is a cross-community bridge._
 - **Why does `NewEngine()` connect `engine test go` to `now Subsystem`, `Engine Subsystem`, `Novelty Index`, `apply Config`, `intelligence test go`, `Aggregator Subsystem`, `Window Subsystem`?**
-  _High betweenness centrality (0.132) - this node is a cross-community bridge._
-- **Why does `main()` connect `apply Config` to `engine test go`, `main Subsystem`, `Dispatcher Subsystem`, `New Internal Token`, `Aggregator Subsystem`?**
-  _High betweenness centrality (0.119) - this node is a cross-community bridge._
-- **Why does `main()` connect `main Subsystem` to `Intelligence Subsystem`, `HTTPShipper Subsystem`, `New Internal Token`, `New Runner`, `shard test go`?**
-  _High betweenness centrality (0.100) - this node is a cross-community bridge._
+  _High betweenness centrality (0.093) - this node is a cross-community bridge._
+- **Why does `main()` connect `apply Config` to `engine test go`, `Dispatcher Subsystem`, `New Internal Token`, `Aggregator Subsystem`, `config go`?**
+  _High betweenness centrality (0.091) - this node is a cross-community bridge._
 - **Are the 26 inferred relationships involving `testIncident()` (e.g. with `TestDispatcherContinuesAfterAnActionFails()` and `TestDispatcherDoesNotDoubleNotifyWithinOnePolicy()`) actually correct?**
   _`testIncident()` has 26 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `install.sh script`, `PATH`, `GOTOOLCHAIN` to the rest of the system?**
-  _492 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _816 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `now Subsystem` be split into smaller, more focused modules?**
   _Cohesion score 0.06164383561643835 - nodes in this community are weakly interconnected._
 - **Should `build Probe Config` be split into smaller, more focused modules?**
-  _Cohesion score 0.05745814307458143 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.055135135135135134 - nodes in this community are weakly interconnected._

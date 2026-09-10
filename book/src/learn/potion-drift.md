@@ -1,5 +1,7 @@
 # Detect passing-body drift with Potion
 
+Before running operational API examples, complete [authenticated operational API access](../operational-api-access.md) and keep that port-forward active.
+
 ## Learning objective
 
 Explain Potion's hot-path embedding and observe a response that still passes its HTTP assertions but crosses a learned semantic-distance threshold.
@@ -51,8 +53,7 @@ The raw body and centroid remain in the runner. `/results` exposes only state, s
 
 ```sh
 for attempt in $(seq 1 60); do
-  RESULT=$(kubectl --context kind-pulse-book -n pulse-system get --raw \
-    '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/results')
+  RESULT=$(curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/results)
   STATE=$(printf '%s' "$RESULT" | python3 -c '
 import json,sys
 for result in json.load(sys.stdin):
@@ -91,11 +92,9 @@ Wait for the debounced signal:
 kubectl --context kind-pulse-book -n book-shop wait httpcanary/catalogue \
   --for=jsonpath='{.status.intelligence.trigger}'=bodyDrift --timeout=180s
 kubectl --context kind-pulse-book -n book-shop get httpcanary catalogue -o yaml
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/results' |
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/results |
   python3 -m json.tool
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/incidents' |
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/incidents |
   python3 -m json.tool
 ```
 
