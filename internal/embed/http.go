@@ -6,8 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
-	"sort"
+	"sync"
 	"time"
 )
 
@@ -26,6 +27,7 @@ type HTTPEmbedder struct {
 	apiKey   string
 	space    string
 	client   *http.Client
+	mu       sync.RWMutex
 
 	// dimensions is discovered from the first response, since the endpoint
 	// does not advertise it up front.
@@ -52,7 +54,11 @@ func (h *HTTPEmbedder) Space() string { return h.space }
 
 // Dimensions implements Embedder. It reports zero until the first successful
 // call, because the endpoint only reveals the width in its response.
-func (h *HTTPEmbedder) Dimensions() int { return h.dimensions }
+func (h *HTTPEmbedder) Dimensions() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.dimensions
+}
 
 // Close implements Embedder.
 func (h *HTTPEmbedder) Close() error { return nil }
@@ -119,20 +125,42 @@ func (h *HTTPEmbedder) Embed(ctx context.Context, texts []string) ([]Vector, err
 		return nil, errShortResult{want: len(texts), got: len(decoded.Data)}
 	}
 
-	// The spec allows results in any order; index is authoritative.
-	sort.Slice(decoded.Data, func(i, j int) bool {
-		return decoded.Data[i].Index < decoded.Data[j].Index
-	})
-
 	vectors := make([]Vector, len(decoded.Data))
-	for index, item := range decoded.Data {
-		values := append([]float32(nil), item.Embedding...)
-		normalizeInPlace(values)
-		vectors[index] = Vector{Space: h.space, Values: values}
-		if h.dimensions == 0 {
-			h.dimensions = len(values)
+	seen := make([]bool, len(decoded.Data))
+	dimensions := 0
+	for _, item := range decoded.Data {
+		if item.Index < 0 || item.Index >= len(vectors) || seen[item.Index] {
+			return nil, fmt.Errorf("embeddings endpoint returned invalid or duplicate index %d", item.Index)
 		}
+		seen[item.Index] = true
+		if len(item.Embedding) == 0 {
+			return nil, fmt.Errorf("embeddings endpoint returned an empty vector at index %d", item.Index)
+		}
+		if dimensions == 0 {
+			dimensions = len(item.Embedding)
+		} else if len(item.Embedding) != dimensions {
+			return nil, fmt.Errorf("embeddings endpoint returned mixed dimensions %d and %d",
+				dimensions, len(item.Embedding))
+		}
+		values := append([]float32(nil), item.Embedding...)
+		for _, value := range values {
+			if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+				return nil, fmt.Errorf("embeddings endpoint returned a non-finite value at index %d", item.Index)
+			}
+		}
+		normalizeInPlace(values)
+		vectors[item.Index] = Vector{Space: h.space, Values: values}
 	}
+
+	h.mu.Lock()
+	if h.dimensions == 0 {
+		h.dimensions = dimensions
+	} else if h.dimensions != dimensions {
+		known := h.dimensions
+		h.mu.Unlock()
+		return nil, fmt.Errorf("embeddings endpoint changed dimensions from %d to %d", known, dimensions)
+	}
+	h.mu.Unlock()
 
 	return vectors, nil
 }

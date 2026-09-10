@@ -147,3 +147,49 @@ func TestHTTPEmbedderRejectsMismatchedResultCount(t *testing.T) {
 		t.Fatal("Embed() error = nil, want a result-count mismatch error")
 	}
 }
+
+func TestHTTPEmbedderRejectsInvalidIndexesAndDimensions(t *testing.T) {
+	t.Parallel()
+
+	responses := []string{
+		`{"data":[{"index":0,"embedding":[1,0]},{"index":0,"embedding":[0,1]}]}`,
+		`{"data":[{"index":0,"embedding":[1,0]},{"index":1,"embedding":[0,1,0]}]}`,
+	}
+	for _, response := range responses {
+		response := response
+		t.Run(response, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(response))
+			}))
+			defer server.Close()
+
+			embedder := NewHTTPEmbedder(server.URL, "", "", SpaceMiniLM, 5*time.Second)
+			if _, err := embedder.Embed(context.Background(), []string{"a", "b"}); err == nil {
+				t.Fatal("Embed() error = nil, want invalid response error")
+			}
+		})
+	}
+}
+
+func TestHTTPEmbedderRejectsDimensionChange(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[1,0]}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[1,0,0]}]}`))
+	}))
+	defer server.Close()
+
+	embedder := NewHTTPEmbedder(server.URL, "", "", SpaceMiniLM, 5*time.Second)
+	if _, err := embedder.Embed(context.Background(), []string{"first"}); err != nil {
+		t.Fatalf("first Embed() error = %v", err)
+	}
+	if _, err := embedder.Embed(context.Background(), []string{"second"}); err == nil {
+		t.Fatal("second Embed() error = nil, want dimension-change error")
+	}
+}
