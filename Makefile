@@ -551,7 +551,7 @@ install-helm: ## Install the latest version of Helm.
 helm-deploy: install-helm ## Deploy manager to the K8s cluster via Helm. Specify an image with IMG.
 	@# Helm never upgrades already-installed CRDs. Apply the generated schemas
 	@# first so a cluster with an older HttpCanary CRD picks up intelligence fields.
-	kubectl apply -f config/crd/bases/
+	"$(KUBECTL)" $(KUBECTL_ARGS) apply -f config/crd/bases/
 	@probe_runner_image="$${PROBE_RUNNER_IMAGE:-$(PROBE_RUNNER_IMAGE)}"; \
 	incident_engine_image="$${INCIDENT_ENGINE_IMAGE:-$(INCIDENT_ENGINE_IMAGE)}"; \
 	controller_repo="$${IMG%:*}"; \
