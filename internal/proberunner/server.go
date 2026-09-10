@@ -1,15 +1,54 @@
 package proberunner
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// NewServeMux creates the HTTP handler with /metrics and /results routes.
+// NewMetricsServeMux creates the unauthenticated metrics and liveness surface.
+func NewMetricsServeMux(logger logr.Logger, gatherer prometheus.Gatherer) *http.ServeMux {
+	mux := http.NewServeMux()
+
+	mux.Handle("GET /metrics", promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{}))
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte("ok")); err != nil {
+			logger.Info("Failed to write health response", "error", err)
+		}
+	})
+	return mux
+}
+
+// NewAPIServeMux creates the authenticated operational surface.
+func NewAPIServeMux(runner *Runner, logger logr.Logger, tokenSource func() string) *http.ServeMux {
+	mux := http.NewServeMux()
+	token := func() string { return "" }
+	if tokenSource != nil {
+		token = tokenSource
+	}
+	mux.HandleFunc("GET /results", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, token()) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		results := runner.GetResults()
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(results); err != nil {
+			logger.Error(err, "Failed to encode results")
+			http.Error(w, "Failed to encode results", http.StatusInternalServerError)
+		}
+	})
+	return mux
+}
+
+// NewServeMux creates the legacy combined HTTP handler. Production binaries use
+// NewMetricsServeMux and NewAPIServeMux on separate listeners.
 //
 // Why a separate function instead of a method on Runner?
 // Because the HTTP server is a distinct concern from probe execution.
@@ -62,4 +101,13 @@ func NewServeMux(runner *Runner, logger logr.Logger, gatherer prometheus.Gathere
 	})
 
 	return mux
+}
+
+func authorized(request *http.Request, token string) bool {
+	if token == "" {
+		return true
+	}
+	provided := strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer ")
+	return len(provided) == len(token) &&
+		subtle.ConstantTimeCompare([]byte(provided), []byte(token)) == 1
 }

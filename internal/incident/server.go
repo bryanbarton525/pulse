@@ -22,6 +22,90 @@ const (
 	maxResultBatch      = 10000
 )
 
+// NewMetricsServeMux creates the unauthenticated metrics and liveness surface.
+func NewMetricsServeMux(logger logr.Logger, gatherer prometheus.Gatherer) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{}))
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	return mux
+}
+
+// NewAPIServeMux creates the authenticated operational API surface.
+func NewAPIServeMux(
+	engine *Engine,
+	aggregator *Aggregator,
+	logger logr.Logger,
+	internalToken func() string,
+) *http.ServeMux {
+	mux := http.NewServeMux()
+	token := func() string { return "" }
+	if internalToken != nil {
+		token = internalToken
+	}
+	mux.HandleFunc("POST /observations", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, token()) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		var batch observation.Batch
+		if !decode(w, r, logger, &batch) {
+			return
+		}
+		if len(batch.Observations) > maxObservationBatch {
+			http.Error(w, "observation batch too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		for _, signal := range batch.Observations {
+			engine.Ingest(r.Context(), signal)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+	mux.HandleFunc("POST /results", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, token()) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		var batch ResultBatch
+		if !decode(w, r, logger, &batch) {
+			return
+		}
+		if len(batch.Results) > maxResultBatch {
+			http.Error(w, "result batch too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		engine.ReconcileResults(batch.Results)
+		aggregator.Record(batch)
+		w.WriteHeader(http.StatusAccepted)
+	})
+	mux.HandleFunc("GET /results", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, token()) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		writeJSON(w, logger, aggregator.Results())
+	})
+	mux.HandleFunc("GET /incidents", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, token()) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		writeJSON(w, logger, engine.Open())
+	})
+	mux.HandleFunc("GET /topology", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, token()) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		writeJSON(w, logger, map[string]any{
+			"declared": engine.DeclaredEdges(), "proposals": engine.Proposals(),
+		})
+	})
+	return mux
+}
+
 // NewServeMux builds the incident engine's HTTP surface.
 //
 // Mirrors the probe runner's server so both binaries look and behave the same:
@@ -93,15 +177,27 @@ func NewServeMux(
 		w.WriteHeader(http.StatusAccepted)
 	})
 
-	mux.HandleFunc("GET /results", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /results", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, token()) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		writeJSON(w, logger, aggregator.Results())
 	})
 
-	mux.HandleFunc("GET /incidents", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /incidents", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, token()) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		writeJSON(w, logger, engine.Open())
 	})
 
-	mux.HandleFunc("GET /topology", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /topology", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, token()) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		writeJSON(w, logger, map[string]any{
 			// Declared edges are what actually drives correlation; proposals
 			// are hypotheses awaiting a human. Keeping them in separate fields

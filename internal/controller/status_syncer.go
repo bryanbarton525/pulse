@@ -339,7 +339,7 @@ func (s *StatusSyncer) probeRunnerResultsURL() string {
 	}
 
 	return fmt.Sprintf("http://%s.%s.svc:%d/results",
-		ProbeRunnerName, s.Namespace, ProbeRunnerPort)
+		ProbeRunnerName, s.Namespace, ProbeRunnerAPIPort)
 }
 
 // shardResultsURLs addresses every probe runner replica directly.
@@ -356,7 +356,7 @@ func (s *StatusSyncer) shardResultsURLs(shards int) []string {
 	urls := make([]string, 0, shards)
 	for ordinal := range shards {
 		urls = append(urls, fmt.Sprintf("http://%s-%d.%s.%s.svc:%d/results",
-			ProbeRunnerName, ordinal, ProbeRunnerHeadlessName, s.Namespace, ProbeRunnerPort))
+			ProbeRunnerName, ordinal, ProbeRunnerHeadlessName, s.Namespace, ProbeRunnerAPIPort))
 	}
 	return urls
 }

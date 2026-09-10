@@ -30,12 +30,14 @@ import (
 
 // Resource names used by the controller for the infrastructure it manages.
 const (
-	ProbeRunnerName = "pulse-probe-runner"
-	ProbeConfigName = "pulse-probe-config"
-	ProbeConfigFile = "probes.yaml"
-	ProbeAuthName   = "pulse-probe-auth"
-	ProbeAuthFile   = "auth.yaml"
-	ProbeRunnerPort = 9090
+	ProbeRunnerName       = "pulse-probe-runner"
+	ProbeConfigName       = "pulse-probe-config"
+	ProbeConfigFile       = "probes.yaml"
+	ProbeAuthName         = "pulse-probe-auth"
+	ProbeAuthFile         = "auth.yaml"
+	ProbeInternalTokenKey = "internal-token"
+	ProbeRunnerPort       = 9090
+	ProbeRunnerAPIPort    = 9091
 )
 
 // Labels applied to all resources the controller manages.
@@ -217,7 +219,7 @@ func (r *CanaryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	// Service keeps the original /results endpoint working for single-shard
 	// deployments and for out-of-cluster debugging.
 	if err := r.ensureNamedService(
-		ctx, ProbeRunnerHeadlessName, ProbeRunnerName, ProbeRunnerPort, true); err != nil {
+		ctx, ProbeRunnerHeadlessName, ProbeRunnerName, true); err != nil {
 		logger.Error(err, "Failed to ensure the headless Service")
 		return ctrl.Result{}, err
 	}
@@ -447,6 +449,10 @@ func (r *CanaryReconciler) populateInternalAuthToken(
 	var secret corev1.Secret
 	err := r.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: ProbeAuthName}, &secret)
 	if err == nil {
+		if token := string(secret.Data[ProbeInternalTokenKey]); token != "" {
+			authStore.Values[proberunner.InternalAuthTokenKey] = token
+			return nil
+		}
 		var existing proberunner.AuthStore
 		if payload := secret.Data[ProbeAuthFile]; len(payload) > 0 {
 			if unmarshalErr := yaml.Unmarshal(payload, &existing); unmarshalErr != nil {
@@ -482,8 +488,17 @@ func (r *CanaryReconciler) ensureAuthSecret(ctx context.Context, authYAML []byte
 	result, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
 		secret.Labels = managedLabels
 		secret.Type = corev1.SecretTypeOpaque
+		var store proberunner.AuthStore
+		if err := yaml.Unmarshal(authYAML, &store); err != nil {
+			return fmt.Errorf("decoding generated internal auth store: %w", err)
+		}
+		token := store.Values[proberunner.InternalAuthTokenKey]
+		if token == "" {
+			return fmt.Errorf("generated auth store is missing internal token")
+		}
 		secret.Data = map[string][]byte{
-			ProbeAuthFile: authYAML,
+			ProbeAuthFile:         authYAML,
+			ProbeInternalTokenKey: []byte(token),
 		}
 		return nil
 	})
@@ -522,6 +537,12 @@ func (r *CanaryReconciler) ensureService(ctx context.Context) error {
 				Name:       "http",
 				Port:       ProbeRunnerPort,
 				TargetPort: intstr.FromString("http"),
+				Protocol:   corev1.ProtocolTCP,
+			},
+			{
+				Name:       "api",
+				Port:       ProbeRunnerAPIPort,
+				TargetPort: intstr.FromString("api"),
 				Protocol:   corev1.ProtocolTCP,
 			},
 		}
