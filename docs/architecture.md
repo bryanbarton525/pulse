@@ -81,7 +81,7 @@ A standalone binary deployed by the controller. Responsibilities:
 - Watch for config file changes (5-second poll)
 - Execute HTTP checks on per-probe intervals
 - Store results in a thread-safe in-memory map
-- Serve `/results` (JSON), `/metrics` (Prometheus), `/healthz` (liveness)
+- Serve `/metrics` and `/healthz` on 9090; serve Bearer-authenticated `/results` on 9091
 
 ## Key Design Decisions
 

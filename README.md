@@ -396,7 +396,8 @@ For full status propagation from a locally running controller, start a local pro
 ```bash
 kubectl get configmap pulse-probe-config -n pulse-system -o jsonpath='{.data.probes\.yaml}' > /tmp/pulse-probes.yaml
 kubectl get secret pulse-probe-auth -n pulse-system -o jsonpath='{.data.auth\.yaml}' | base64 --decode > /tmp/pulse-auth.yaml
-./bin/probe-runner --config=/tmp/pulse-probes.yaml --auth-file=/tmp/pulse-auth.yaml --listen=127.0.0.1:9090
+./bin/probe-runner --config=/tmp/pulse-probes.yaml --auth-file=/tmp/pulse-auth.yaml \
+  --listen=127.0.0.1:9090 --api-listen=127.0.0.1:9091
 POD_NAMESPACE=pulse-system \
 PULSE_PROBE_RUNNER_RESULTS_URL=http://127.0.0.1:9091/results \
 make run
