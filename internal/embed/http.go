@@ -34,8 +34,10 @@ type HTTPEmbedder struct {
 	dimensions int
 }
 
-// NewHTTPEmbedder builds an embedder backed by a remote service.
-func NewHTTPEmbedder(endpoint, model, apiKey, space string, timeout time.Duration) *HTTPEmbedder {
+// NewHTTPEmbedder builds an embedder backed by a remote service. Its space is
+// derived from the endpoint and model, deliberately excluding the API key so
+// credential rotation retains learned correlation state.
+func NewHTTPEmbedder(endpoint, model, apiKey string, timeout time.Duration) *HTTPEmbedder {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
@@ -44,7 +46,7 @@ func NewHTTPEmbedder(endpoint, model, apiKey, space string, timeout time.Duratio
 		endpoint: endpoint,
 		model:    model,
 		apiKey:   apiKey,
-		space:    space,
+		space:    SpaceIdentity("http", NormalizedEndpoint(endpoint), model),
 		client:   &http.Client{Timeout: timeout},
 	}
 }
@@ -143,10 +145,8 @@ func (h *HTTPEmbedder) Embed(ctx context.Context, texts []string) ([]Vector, err
 				dimensions, len(item.Embedding))
 		}
 		values := append([]float32(nil), item.Embedding...)
-		for _, value := range values {
-			if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
-				return nil, fmt.Errorf("embeddings endpoint returned a non-finite value at index %d", item.Index)
-			}
+		if !finiteEmbedding(values) {
+			return nil, fmt.Errorf("embeddings endpoint returned a non-finite value at index %d", item.Index)
 		}
 		normalizeInPlace(values)
 		vectors[item.Index] = Vector{Space: h.space, Values: values}
@@ -163,6 +163,15 @@ func (h *HTTPEmbedder) Embed(ctx context.Context, texts []string) ([]Vector, err
 	h.mu.Unlock()
 
 	return vectors, nil
+}
+
+func finiteEmbedding(values []float32) bool {
+	for _, value := range values {
+		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+			return false
+		}
+	}
+	return true
 }
 
 func truncate(text string, limit int) string {

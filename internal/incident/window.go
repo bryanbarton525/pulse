@@ -104,3 +104,11 @@ func (w *Window) Len() int {
 	defer w.mu.Unlock()
 	return len(w.entries)
 }
+
+// Reset removes every candidate. It is used when the correlation embedding
+// space changes, making all retained candidate vectors incomparable.
+func (w *Window) Reset() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.entries = nil
+}

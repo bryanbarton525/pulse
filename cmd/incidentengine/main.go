@@ -186,7 +186,7 @@ func buildColdEmbedder(
 		logger.Info("Using a remote embeddings endpoint",
 			"endpoint", model.HTTP.Endpoint, "authenticated", apiKey != "")
 		return embed.NewHTTPEmbedder(
-			model.HTTP.Endpoint, model.HTTP.Model, apiKey, embed.SpaceMiniLM, 30*time.Second)
+			model.HTTP.Endpoint, model.HTTP.Model, apiKey, 30*time.Second)
 
 	default:
 		embedder, err := embed.LoadONNX(model.ONNX.ModelPath, model.ONNX.VocabPath, model.ONNX.MaxSequenceLength)
