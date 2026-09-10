@@ -18,7 +18,7 @@ spec:
               control-plane: controller-manager
               app.kubernetes.io/name: pulse
       ports:
-        - {port: 9090, protocol: TCP}
+        - {port: 9091, protocol: TCP}
     - from:
         - namespaceSelector:
             matchLabels: {metrics: enabled}
@@ -46,7 +46,7 @@ spec:
                 operator: In
                 values: [pulse-probe-runner, pulse]
       ports:
-        - {port: 9090, protocol: TCP}
+        - {port: 9091, protocol: TCP}
     - from:
         - namespaceSelector:
             matchLabels: {metrics: enabled}

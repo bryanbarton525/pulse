@@ -21,7 +21,7 @@ spec:
             matchLabels:
               control-plane: controller-manager
       ports:
-        - port: 9090
+        - port: 9091
           protocol: TCP
     - from:
         - namespaceSelector:
@@ -57,7 +57,7 @@ spec:
                   - pulse-probe-runner
                   - {{ include "pulse.name" . }}
       ports:
-        - port: 9090
+        - port: 9091
           protocol: TCP
     - from:
         - namespaceSelector:

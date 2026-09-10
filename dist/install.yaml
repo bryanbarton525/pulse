@@ -877,6 +877,7 @@ spec:
               interval:
                 default: 30
                 description: Interval is the frequency in seconds to run the check.
+                maximum: 3600
                 minimum: 5
                 type: integer
               outputs:
@@ -1301,6 +1302,7 @@ spec:
               interval:
                 default: 30
                 description: Interval is how often (in seconds) to run the check.
+                maximum: 3600
                 minimum: 5
                 type: integer
               journey:
@@ -1838,9 +1840,9 @@ spec:
             fieldRef:
               fieldPath: metadata.namespace
         - name: PULSE_PROBE_RUNNER_IMAGE
-          value: probe-runner:latest
+          value: pulse-probe-runner:latest
         - name: PULSE_INCIDENT_ENGINE_IMAGE
-          value: incident-engine:latest
+          value: pulse-incident-engine:latest
         image: controller:latest
         livenessProbe:
           httpGet:
@@ -1921,7 +1923,7 @@ spec:
           - pulse-probe-runner
           - pulse
     ports:
-    - port: 9090
+    - port: 9091
       protocol: TCP
   - from:
     - namespaceSelector:
@@ -1952,7 +1954,7 @@ spec:
           app.kubernetes.io/name: pulse
           control-plane: controller-manager
     ports:
-    - port: 9090
+    - port: 9091
       protocol: TCP
   - from:
     - namespaceSelector:
