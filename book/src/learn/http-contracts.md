@@ -84,13 +84,17 @@ curl --fail --max-time 5 -i http://127.0.0.1:18080/
 The independent request remains HTTP `200`; Pulse should report `Expected 201 but got 200`. If the wait expires, inspect current live results and runner logs:
 
 ```sh
-kubectl --context kind-pulse-book -n pulse-system port-forward service/pulse-probe-runner 19090:9090
+kubectl --context kind-pulse-book -n pulse-system port-forward service/pulse-probe-runner 19091:9091
 ```
 
 In another terminal:
 
 ```sh
-curl --fail --max-time 5 http://127.0.0.1:19090/results
+PULSE_INTERNAL_TOKEN=$(kubectl --context kind-pulse-book -n pulse-system get \
+  secret/pulse-probe-auth -o jsonpath='{.data.internal-token}' | base64 --decode)
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" \
+  http://127.0.0.1:19091/results
+unset PULSE_INTERNAL_TOKEN
 kubectl --context kind-pulse-book -n pulse-system logs statefulset/pulse-probe-runner --since=5m
 ```
 

@@ -15,6 +15,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	"github.com/bryanbarton525/pulse/internal/authn"
 	"github.com/bryanbarton525/pulse/internal/proberunner"
 )
 
@@ -22,6 +23,8 @@ func main() {
 	var configPath string
 	var authFilePath string
 	var listenAddr string
+	var apiListenAddr string
+	var allowUnauthenticatedAPI bool
 	var incidentEngineURL string
 	var hotModelPath string
 	var hotVocabPath string
@@ -30,7 +33,10 @@ func main() {
 		"Path to the probe config file (mounted from ConfigMap).")
 	flag.StringVar(&authFilePath, "auth-file", "/etc/pulse-auth/auth.yaml",
 		"Path to the auth file (mounted from Secret).")
-	flag.StringVar(&listenAddr, "listen", ":9090", "Address to serve /metrics and /results on.")
+	flag.StringVar(&listenAddr, "listen", ":9090", "Address to serve metrics and liveness on.")
+	flag.StringVar(&apiListenAddr, "api-listen", ":9091", "Address to serve the authenticated operational API on.")
+	flag.BoolVar(&allowUnauthenticatedAPI, "allow-unauthenticated-api", false,
+		"Allow tokenless operational API access for explicit local development only.")
 	flag.StringVar(&incidentEngineURL, "incident-engine", "",
 		"Base URL of the incident engine. Empty disables correlation and action dispatch.")
 	flag.StringVar(&hotModelPath, "hot-model", proberunner.DefaultHotModelPath,
@@ -134,18 +140,32 @@ func main() {
 
 	// ── Start HTTP server ────────────────────────────────────
 	//
-	// Serves /metrics (Prometheus), /results (controller), and /healthz (k8s).
-	mux := proberunner.NewServeMux(runner, logger, registry)
-	server := &http.Server{
+	// Metrics and liveness remain on 9090; controller-facing results use the
+	// separately authenticated operational API listener.
+	metricsServer := &http.Server{
 		Addr:              listenAddr,
-		Handler:           mux,
+		Handler:           proberunner.NewMetricsServeMux(logger, registry),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	apiServer := &http.Server{
+		Addr: apiListenAddr,
+		Handler: proberunner.NewAPIServeMux(runner, logger, authn.Policy{
+			Token: internalToken.Get, AllowUnauthenticated: allowUnauthenticatedAPI,
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	go func() {
-		logger.Info("Starting HTTP server", "addr", listenAddr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error(err, "HTTP server failed")
+		logger.Info("Starting metrics server", "addr", listenAddr)
+		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error(err, "Metrics server failed")
+			os.Exit(1)
+		}
+	}()
+	go func() {
+		logger.Info("Starting operational API server", "addr", apiListenAddr)
+		if err := apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error(err, "Operational API server failed")
 			os.Exit(1)
 		}
 	}()
@@ -181,8 +201,11 @@ func main() {
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Error(err, "HTTP server shutdown error")
+	if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+		logger.Error(err, "Metrics server shutdown error")
+	}
+	if err := apiServer.Shutdown(shutdownCtx); err != nil {
+		logger.Error(err, "Operational API server shutdown error")
 	}
 
 	logger.Info("Probe runner stopped")

@@ -1,5 +1,7 @@
 # Replay a failure and classify novelty
 
+Before running operational API examples, complete [authenticated operational API access](../operational-api-access.md) and keep that port-forward active.
+
 ## Learning objective
 
 Recover and replay the same outage, compare incident IDs and novelty state, and explain the in-memory cluster index, settling period, action cooldown, and hourly rate limit.
@@ -25,8 +27,7 @@ kubectl --context kind-pulse-book -n pulse-system rollout restart \
 kubectl --context kind-pulse-book -n pulse-system rollout status \
   deployment/pulse-incident-engine --timeout=180s
 sleep 2
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/incidents'
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/incidents
 ```
 
 Restart is deliberate here: it clears the engine's in-memory failure clusters, incidents, inference state, action throttle history, and aggregated result history. Runners continue probing and reassert an ongoing failure at most every two minutes, so begin from a recovered state.
@@ -43,8 +44,7 @@ kubectl --context kind-pulse-book -n shop wait httpcanary/catalogue \
 FIRST_ID=$(kubectl --context kind-pulse-book -n shop get httpcanary catalogue \
   -o jsonpath='{.status.intelligence.incidentID}')
 [ -n "$FIRST_ID" ]
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/incidents' \
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/incidents \
   > /tmp/pulse-book-first-incident.json
 python3 -m json.tool /tmp/pulse-book-first-incident.json
 kubectl --context kind-pulse-book -n pulse-system get --raw \
@@ -66,8 +66,7 @@ for canary in catalogue checkout search; do
     --for=jsonpath='{.status.phase}'=Healthy --timeout=180s
 done
 for attempt in $(seq 1 90); do
-  OPEN=$(kubectl --context kind-pulse-book -n pulse-system get --raw \
-    '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/incidents')
+  OPEN=$(curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/incidents)
   [ "$OPEN" = '[]' ] && break
   sleep 2
 done
@@ -88,8 +87,7 @@ kubectl --context kind-pulse-book -n shop wait httpcanary/catalogue \
 SECOND_ID=$(kubectl --context kind-pulse-book -n shop get httpcanary catalogue \
   -o jsonpath='{.status.intelligence.incidentID}')
 [ -n "$SECOND_ID" ] && [ "$SECOND_ID" != "$FIRST_ID" ]
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/incidents' \
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/incidents \
   > /tmp/pulse-book-second-incident.json
 python3 -m json.tool /tmp/pulse-book-second-incident.json
 kubectl --context kind-pulse-book -n pulse-system get --raw \
@@ -137,8 +135,7 @@ for canary in catalogue checkout search; do
     --for=jsonpath='{.status.phase}'=Healthy --timeout=180s
 done
 for attempt in $(seq 1 90); do
-  OPEN=$(kubectl --context kind-pulse-book -n pulse-system get --raw \
-    '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/incidents')
+  OPEN=$(curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/incidents)
   [ "$OPEN" = '[]' ] && break
   sleep 2
 done

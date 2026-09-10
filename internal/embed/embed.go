@@ -32,8 +32,12 @@ package embed
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"math"
+	"net/url"
+	"strings"
 )
 
 // Embedding spaces. A vector is only comparable to another vector from the
@@ -42,6 +46,36 @@ const (
 	SpacePotion = "potion"
 	SpaceMiniLM = "minilm"
 )
+
+// SpaceIdentity returns a stable, non-secret identity for a configured
+// embedding space. Configuration is part of the identity: a vector from a
+// differently configured backend must never be compared with retained vectors.
+func SpaceIdentity(backend string, parts ...string) string {
+	normalizedBackend := strings.ToLower(strings.TrimSpace(backend))
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(normalizedBackend))
+	for _, part := range parts {
+		_, _ = hash.Write([]byte{0})
+		_, _ = hash.Write([]byte(strings.TrimSpace(part)))
+	}
+	return normalizedBackend + ":" + hex.EncodeToString(hash.Sum(nil))
+}
+
+// NormalizedEndpoint removes credentials and presentation-only URL differences
+// before deriving an HTTP embedding-space identity.
+func NormalizedEndpoint(endpoint string) string {
+	parsed, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil {
+		return strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	return parsed.String()
+}
 
 // Vector is an embedding tagged with the space that produced it.
 //

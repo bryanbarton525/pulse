@@ -36,10 +36,11 @@ type Engine struct {
 	byProbe map[string]string
 	counter int
 
-	window    *Window
-	graph     *Graph
-	novelty   *NoveltyIndex
-	inference *Inference
+	window      *Window
+	graph       *Graph
+	novelty     *NoveltyIndex
+	inference   *Inference
+	maxClusters int
 
 	// probes is the flattened config the engine mounts from the same ConfigMap
 	// the runners read, so it knows every probe's policy without any of that
@@ -107,6 +108,7 @@ func NewEngine(options EngineOptions) *Engine {
 		graph:         NewGraph(),
 		novelty:       NewNoveltyIndex(now(), options.MaxClusters),
 		inference:     NewInference(),
+		maxClusters:   options.MaxClusters,
 		probes:        map[string]proberunner.Probe{},
 		embedder:      options.Embedder,
 		dispatcher:    options.Dispatcher,
@@ -122,9 +124,8 @@ func NewEngine(options EngineOptions) *Engine {
 // running. Without this the engine would keep using whatever was loaded at
 // startup and silently ignore the new configuration.
 //
-// Existing novelty clusters are discarded on a swap: they hold vectors from the
-// old embedding space, and comparing those against the new model's output is
-// meaningless. The settling period covers the resulting burst of "new" shapes.
+// Vector-dependent state is discarded only when the embedding space changes.
+// Credential-only rotation preserves it because it returns comparable vectors.
 func (e *Engine) SetEmbedder(embedder embed.Embedder) embed.Embedder {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -138,7 +139,10 @@ func (e *Engine) SetEmbedder(embedder embed.Embedder) embed.Embedder {
 
 	previous := e.embedder
 	e.embedder = embedder
-	e.novelty = NewNoveltyIndex(e.now(), 0)
+	if previous == nil || embedder == nil || previous.Space() != embedder.Space() {
+		e.window.Reset()
+		e.novelty = NewNoveltyIndex(e.now(), e.maxClusters)
+	}
 	return previous
 }
 

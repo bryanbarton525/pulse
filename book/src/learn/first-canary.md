@@ -51,13 +51,17 @@ Mounted ConfigMap updates do not arrive instantly. In the validated lab, the con
 To compare persisted status with the live result, start a second port-forward:
 
 ```sh
-kubectl --context kind-pulse-book -n pulse-system port-forward service/pulse-probe-runner 19090:9090
+kubectl --context kind-pulse-book -n pulse-system port-forward service/pulse-probe-runner 19091:9091
 ```
 
 Then request the live view:
 
 ```sh
-curl --fail --max-time 5 http://127.0.0.1:19090/results
+PULSE_INTERNAL_TOKEN=$(kubectl --context kind-pulse-book -n pulse-system get \
+  secret/pulse-probe-auth -o jsonpath='{.data.internal-token}' | base64 --decode)
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" \
+  http://127.0.0.1:19091/results
+unset PULSE_INTERNAL_TOKEN
 ```
 
 Read the result's time and message. The CR timestamp may stay unchanged while identical healthy checks continue. That reduces API writes; it does not mean probes stopped.

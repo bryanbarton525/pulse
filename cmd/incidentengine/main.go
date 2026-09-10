@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/bryanbarton525/pulse/internal/actions"
+	"github.com/bryanbarton525/pulse/internal/authn"
 	"github.com/bryanbarton525/pulse/internal/embed"
 	"github.com/bryanbarton525/pulse/internal/incident"
 	"github.com/bryanbarton525/pulse/internal/proberunner"
@@ -48,13 +49,18 @@ func main() {
 	var configPath string
 	var authFilePath string
 	var listenAddr string
+	var apiListenAddr string
+	var allowUnauthenticatedAPI bool
 	var onnxLibraryPath string
 
 	flag.StringVar(&configPath, "config", "/etc/pulse/probes.yaml",
 		"Path to the probe config file (mounted from the same ConfigMap the runners read).")
 	flag.StringVar(&authFilePath, "auth-file", "/etc/pulse-auth/auth.yaml",
 		"Path to the auth file (mounted from the same Secret the runners read).")
-	flag.StringVar(&listenAddr, "listen", ":9090", "Address to serve the HTTP API on.")
+	flag.StringVar(&listenAddr, "listen", ":9090", "Address to serve metrics and liveness on.")
+	flag.StringVar(&apiListenAddr, "api-listen", ":9091", "Address to serve the authenticated operational API on.")
+	flag.BoolVar(&allowUnauthenticatedAPI, "allow-unauthenticated-api", false,
+		"Allow tokenless operational API access for explicit local development only.")
 	flag.StringVar(&onnxLibraryPath, "onnxruntime-lib", "",
 		"Path to libonnxruntime.so. Defaults to the ONNXRUNTIME_SHARED_LIBRARY_PATH env var.")
 
@@ -119,17 +125,30 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	mux := incident.NewServeMux(engine, aggregator, logger, registry, internalToken.Get)
-	server := &http.Server{
+	metricsServer := &http.Server{
 		Addr:              listenAddr,
-		Handler:           mux,
+		Handler:           incident.NewMetricsServeMux(logger, registry),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	apiServer := &http.Server{
+		Addr: apiListenAddr,
+		Handler: incident.NewAPIServeMux(engine, aggregator, logger, authn.Policy{
+			Token: internalToken.Get, AllowUnauthenticated: allowUnauthenticatedAPI,
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	go func() {
-		logger.Info("Starting HTTP server", "addr", listenAddr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error(err, "HTTP server failed")
+		logger.Info("Starting metrics server", "addr", listenAddr)
+		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error(err, "Metrics server failed")
+			os.Exit(1)
+		}
+	}()
+	go func() {
+		logger.Info("Starting operational API server", "addr", apiListenAddr)
+		if err := apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error(err, "Operational API server failed")
 			os.Exit(1)
 		}
 	}()
@@ -147,8 +166,11 @@ func main() {
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Error(err, "HTTP server shutdown error")
+	if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+		logger.Error(err, "Metrics server shutdown error")
+	}
+	if err := apiServer.Shutdown(shutdownCtx); err != nil {
+		logger.Error(err, "Operational API server shutdown error")
 	}
 
 	logger.Info("Incident engine stopped")
@@ -186,7 +208,7 @@ func buildColdEmbedder(
 		logger.Info("Using a remote embeddings endpoint",
 			"endpoint", model.HTTP.Endpoint, "authenticated", apiKey != "")
 		return embed.NewHTTPEmbedder(
-			model.HTTP.Endpoint, model.HTTP.Model, apiKey, embed.SpaceMiniLM, 30*time.Second)
+			model.HTTP.Endpoint, model.HTTP.Model, apiKey, 30*time.Second)
 
 	default:
 		embedder, err := embed.LoadONNX(model.ONNX.ModelPath, model.ONNX.VocabPath, model.ONNX.MaxSequenceLength)

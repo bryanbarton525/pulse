@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -73,6 +74,24 @@ class InspectTests(unittest.TestCase):
     def test_detector_distinguishes_warmup_from_real_zero(self):
         self.assertEqual(inspect.detector({"driftState": "warming", "driftSamples": 2}, "drift"), "warming (2)")
         self.assertEqual(inspect.detector({"driftState": "ready", "driftSamples": 8}, "drift"), "0.000 (8)")
+
+    def test_internal_token_is_decoded_without_being_printed(self):
+        with mock.patch.object(inspect, "kubectl_json", return_value={"data": {"internal-token": "c2VjcmV0"}}):
+            with mock.patch("sys.stdout") as stdout:
+                self.assertEqual(inspect.internal_token(), "secret")
+                stdout.write.assert_not_called()
+
+    def test_api_forward_cleans_up_on_failure(self):
+        process = mock.Mock()
+        process.poll.return_value = None
+        process.wait.return_value = 0
+        with mock.patch.object(inspect.subprocess, "Popen", return_value=process), \
+             mock.patch.object(inspect.urllib.request, "urlopen", side_effect=inspect.urllib.error.HTTPError("url", 404, "ready", {}, None)):
+            with self.assertRaises(RuntimeError):
+                with inspect.api_forward():
+                    raise RuntimeError("scenario failed")
+        process.terminate.assert_called_once()
+        process.wait.assert_called_once()
 
 
 if __name__ == "__main__":

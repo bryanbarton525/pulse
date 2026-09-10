@@ -28,7 +28,7 @@ func TestStatusSyncerProbeRunnerResultsURL(t *testing.T) {
 				Namespace: "pulse-system",
 				Interval:  15 * time.Second,
 			},
-			expected: "http://pulse-probe-runner.pulse-system.svc:9090/results",
+			expected: "http://pulse-probe-runner.pulse-system.svc:9091/results",
 		},
 	}
 
