@@ -39,6 +39,7 @@ func initONNXRuntime() error {
 type ONNXEmbedder struct {
 	tokenizer *WordPiece
 	maxTokens int
+	space     string
 
 	// mu serializes Run(). ONNX Runtime sessions are not goroutine-safe, and
 	// on the cold path there is one embed call per failure, so contention here
@@ -73,14 +74,19 @@ func LoadONNX(modelPath, vocabPath string, maxTokens int) (Embedder, error) {
 		return nil, fmt.Errorf("opening ONNX model %s: %w", modelPath, err)
 	}
 
-	return &ONNXEmbedder{tokenizer: tokenizer, maxTokens: maxTokens, session: session}, nil
+	return &ONNXEmbedder{
+		tokenizer: tokenizer,
+		maxTokens: maxTokens,
+		space:     SpaceIdentity("onnx", modelPath, vocabPath, fmt.Sprintf("%d", maxTokens)),
+		session:   session,
+	}, nil
 }
 
 // ONNXCompiledIn reports whether this binary can run the in-process transformer.
 func ONNXCompiledIn() bool { return true }
 
 // Space implements Embedder.
-func (o *ONNXEmbedder) Space() string { return SpaceMiniLM }
+func (o *ONNXEmbedder) Space() string { return o.space }
 
 // Dimensions implements Embedder.
 func (o *ONNXEmbedder) Dimensions() int { return int(o.dimensions.Load()) }
@@ -196,7 +202,7 @@ func (o *ONNXEmbedder) Embed(ctx context.Context, texts []string) ([]Vector, err
 			normalizeInPlace(values)
 		}
 
-		vectors[row] = Vector{Space: SpaceMiniLM, Values: values}
+		vectors[row] = Vector{Space: o.space, Values: values}
 	}
 
 	return vectors, nil

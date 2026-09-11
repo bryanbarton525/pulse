@@ -1,5 +1,7 @@
 # Recover the lab and validate a real contribution
 
+Before running operational API examples, complete [authenticated operational API access](../operational-api-access.md) and keep that port-forward active.
+
 ## Learning objective
 
 Return every fixture and custom resource to a known state, inspect the already-merged HTTP interval bound, apply the same one-hour maximum to `GrpcCanary`, add a regression test, regenerate derived artifacts through their generator, build and load the changed image, replay the admission check, and finally delete only `kind-pulse-book`.
@@ -50,8 +52,7 @@ kubectl --context kind-pulse-book -n shop wait grpccanary/orders \
   --for=jsonpath='{.status.phase}'=Healthy --timeout=180s
 kubectl --context kind-pulse-book -n book-shop wait httpcanary/catalogue \
   --for=jsonpath='{.status.phase}'=Healthy --timeout=180s
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/results' |
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/results |
   python3 -c '
 import json,sys
 results=json.load(sys.stdin)

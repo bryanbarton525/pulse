@@ -20,8 +20,9 @@ spec:
         - podSelector:
             matchLabels:
               control-plane: controller-manager
+              app.kubernetes.io/name: {{ include "pulse.name" . }}
       ports:
-        - port: 9090
+        - port: 9091
           protocol: TCP
     - from:
         - namespaceSelector:
@@ -57,7 +58,7 @@ spec:
                   - pulse-probe-runner
                   - {{ include "pulse.name" . }}
       ports:
-        - port: 9090
+        - port: 9091
           protocol: TCP
     - from:
         - namespaceSelector:

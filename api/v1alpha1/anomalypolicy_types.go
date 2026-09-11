@@ -751,6 +751,9 @@ type CanaryIntelligenceStatus struct {
 	// +optional
 	Score string `json:"score,omitempty"`
 
+	// LastSignalTime is the latest signal received for the active incident.
+	// Timestamp-only changes are projected at most once per minute; material
+	// incident changes and closure are projected immediately.
 	// +optional
 	LastSignalTime *metav1.Time `json:"lastSignalTime,omitempty"`
 

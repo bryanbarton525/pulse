@@ -1,5 +1,7 @@
 # Install the intelligence runtime
 
+Before running operational API examples, complete [authenticated operational API access](../operational-api-access.md) and keep that port-forward active.
+
 ## Objective
 
 Build the native ONNX incident engine, load it into the isolated Kind node, deploy the local recording sink and complete fixture set, and prove that both embedded models loaded. This adds intelligence to the deterministic installation; it does not replace protocol assertions.
@@ -148,11 +150,9 @@ kubectl --context kind-pulse-book -n shop wait grpccanary/orders \
 Inspect the complete live view through the API-server Service proxy:
 
 ```sh
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/results' |
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/results |
   python3 -m json.tool
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/incidents' |
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/incidents |
   python3 -m json.tool
 ```
 

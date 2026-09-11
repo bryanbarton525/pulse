@@ -398,6 +398,10 @@ spec:
                     maxLength: 8192
                     type: string
                   lastSignalTime:
+                    description: |-
+                      LastSignalTime is the latest signal received for the active incident.
+                      Timestamp-only changes are projected at most once per minute; material
+                      incident changes and closure are projected immediately.
                     format: date-time
                     type: string
                   novel:

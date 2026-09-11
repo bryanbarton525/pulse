@@ -21,8 +21,7 @@ Inspect the live state between scenarios:
 ```sh
 kubectl --context kind-pulse-demo -n shop get httpcanaries,grpccanaries
 kubectl --context kind-pulse-demo -n pulse-system get deploy,sts,pods
-kubectl --context kind-pulse-demo -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/results' |
+KUBECTL='kubectl --context kind-pulse-demo' python3 hack/demo/demo_inspect.py raw results |
   python3 -m json.tool
 ```
 
