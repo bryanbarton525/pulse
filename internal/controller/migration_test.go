@@ -125,6 +125,35 @@ func TestMigrationIsANoOpWhenNoLegacyDeploymentExists(t *testing.T) {
 	}
 }
 
+func TestWorkloadReconcilePreservesPodTemplateAnnotations(t *testing.T) {
+	t.Parallel()
+
+	reconciler := migrationReconciler(t)
+	ctx := context.Background()
+	if err := reconciler.ensureProbeRunner(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	key := types.NamespacedName{Namespace: "pulse-system", Name: ProbeRunnerName}
+	var statefulSet appsv1.StatefulSet
+	if err := reconciler.Get(ctx, key, &statefulSet); err != nil {
+		t.Fatal(err)
+	}
+	statefulSet.Spec.Template.Annotations = map[string]string{"validation": "preserve-me"}
+	if err := reconciler.Update(ctx, &statefulSet); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.ensureProbeRunner(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Get(ctx, key, &statefulSet); err != nil {
+		t.Fatal(err)
+	}
+	if got := statefulSet.Spec.Template.Annotations["validation"]; got != "preserve-me" {
+		t.Fatalf("Pod template annotation = %q, want preserved", got)
+	}
+}
+
 // forbidDeletes simulates a manager bound to a stale ClusterRole without the
 // delete verb -- the exact condition that took reconciliation down.
 func forbidDeletes() interceptor.Funcs {

@@ -100,13 +100,15 @@ func catalogueRoutes(mux *http.ServeMux, behavior *behaviorState) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	mux.HandleFunc("GET /login", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /login", func(w http.ResponseWriter, request *http.Request) {
 		http.SetCookie(w, &http.Cookie{
 			Name:     demoSessionCookie,
 			Value:    "authenticated",
 			Path:     "/",
 			HttpOnly: true,
-			Secure:   true,
+			// The demo normally runs over in-cluster HTTP. Production services
+			// should use HTTPS, where this fixture retains the Secure attribute.
+			Secure:   request.TLS != nil,
 			SameSite: http.SameSiteLaxMode,
 		})
 		_, _ = w.Write([]byte("<html><body><h1>Sign in</h1></body></html>"))
