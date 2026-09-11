@@ -38,8 +38,9 @@ import (
 
 // Names for the incident engine workload.
 const (
-	IncidentEngineName = "pulse-incident-engine"
-	IncidentEnginePort = 9090
+	IncidentEngineName    = "pulse-incident-engine"
+	IncidentEnginePort    = 9090
+	IncidentEngineAPIPort = 9091
 
 	// ProbeRunnerHeadlessName is the headless Service a StatefulSet requires
 	// for stable pod DNS.
@@ -138,53 +139,50 @@ func (r *CanaryReconciler) ensureProbeRunner(ctx context.Context, engineURL stri
 			fmt.Sprintf("--config=/etc/pulse/%s", ProbeConfigFile),
 			fmt.Sprintf("--auth-file=/etc/pulse-auth/%s", ProbeAuthFile),
 			fmt.Sprintf("--listen=:%d", ProbeRunnerPort),
+			fmt.Sprintf("--api-listen=:%d", ProbeRunnerAPIPort),
 		}
 		if engineURL != "" {
 			args = append(args, "--incident-engine="+engineURL)
 		}
 
-		statefulSet.Spec.Template = corev1.PodTemplateSpec{
-			ObjectMeta: metav1.ObjectMeta{
-				Labels: map[string]string{"app.kubernetes.io/name": ProbeRunnerName},
+		podSpec := corev1.PodSpec{}
+		container := corev1.Container{
+			Name:  "probe-runner",
+			Image: r.ProbeRunnerImage,
+			Args:  args,
+			Env: []corev1.EnvVar{
+				{
+					// The pod's own name is how it learns its shard.
+					Name: "POD_NAME",
+					ValueFrom: &corev1.EnvVarSource{
+						FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
+					},
+				},
+				{Name: "PULSE_PROBE_RUNNER_SHARDS", Value: strconv.Itoa(int(shards))},
 			},
-			Spec: corev1.PodSpec{
-				ImagePullSecrets: r.ProbeRunnerImagePullSecrets,
-				Containers: []corev1.Container{{
-					Name:  "probe-runner",
-					Image: r.ProbeRunnerImage,
-					Args:  args,
-					Env: []corev1.EnvVar{
-						{
-							// The pod's own name is how it learns its shard.
-							Name: "POD_NAME",
-							ValueFrom: &corev1.EnvVarSource{
-								FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
-							},
-						},
-						{Name: "PULSE_PROBE_RUNNER_SHARDS", Value: strconv.Itoa(int(shards))},
+			Ports: []corev1.ContainerPort{
+				{Name: "http", ContainerPort: ProbeRunnerPort, Protocol: corev1.ProtocolTCP},
+				{Name: "api", ContainerPort: ProbeRunnerAPIPort, Protocol: corev1.ProtocolTCP},
+			},
+			LivenessProbe: &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					HTTPGet: &corev1.HTTPGetAction{
+						Path: "/healthz",
+						Port: intstr.FromString("http"),
 					},
-					Ports: []corev1.ContainerPort{{
-						Name:          "http",
-						ContainerPort: ProbeRunnerPort,
-						Protocol:      corev1.ProtocolTCP,
-					}},
-					LivenessProbe: &corev1.Probe{
-						ProbeHandler: corev1.ProbeHandler{
-							HTTPGet: &corev1.HTTPGetAction{
-								Path: "/healthz",
-								Port: intstr.FromString("http"),
-							},
-						},
-					},
-					Resources: resolveResources("PULSE_PROBE_RUNNER", probeRunnerResources),
-					VolumeMounts: []corev1.VolumeMount{
-						{Name: "probe-config", MountPath: "/etc/pulse", ReadOnly: true},
-						{Name: "probe-auth", MountPath: "/etc/pulse-auth", ReadOnly: true},
-					},
-				}},
-				Volumes: probeVolumes(),
+				},
+			},
+			Resources: resolveResources("PULSE_PROBE_RUNNER", probeRunnerResources),
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: "probe-config", MountPath: "/etc/pulse", ReadOnly: true},
+				{Name: "probe-auth", MountPath: "/etc/pulse-auth", ReadOnly: true},
 			},
 		}
+		podSpec.ImagePullSecrets = r.ProbeRunnerImagePullSecrets
+		podSpec.Containers = []corev1.Container{container}
+		podSpec.Volumes = probeVolumes()
+		statefulSet.Spec.Template.Labels = map[string]string{"app.kubernetes.io/name": ProbeRunnerName}
+		statefulSet.Spec.Template.Spec = podSpec
 
 		return nil
 	})
@@ -272,42 +270,39 @@ func (r *CanaryReconciler) ensureIncidentEngine(ctx context.Context, wanted bool
 		}
 		deployment.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
 
-		deployment.Spec.Template = corev1.PodTemplateSpec{
-			ObjectMeta: metav1.ObjectMeta{
-				Labels: map[string]string{"app.kubernetes.io/name": IncidentEngineName},
+		podSpec := corev1.PodSpec{}
+		container := corev1.Container{
+			Name:  "incident-engine",
+			Image: r.IncidentEngineImage,
+			Args: []string{
+				fmt.Sprintf("--config=/etc/pulse/%s", ProbeConfigFile),
+				fmt.Sprintf("--auth-file=/etc/pulse-auth/%s", ProbeAuthFile),
+				fmt.Sprintf("--listen=:%d", IncidentEnginePort),
+				fmt.Sprintf("--api-listen=:%d", IncidentEngineAPIPort),
 			},
-			Spec: corev1.PodSpec{
-				ImagePullSecrets: r.ProbeRunnerImagePullSecrets,
-				Containers: []corev1.Container{{
-					Name:  "incident-engine",
-					Image: r.IncidentEngineImage,
-					Args: []string{
-						fmt.Sprintf("--config=/etc/pulse/%s", ProbeConfigFile),
-						fmt.Sprintf("--auth-file=/etc/pulse-auth/%s", ProbeAuthFile),
-						fmt.Sprintf("--listen=:%d", IncidentEnginePort),
+			Ports: []corev1.ContainerPort{
+				{Name: "http", ContainerPort: IncidentEnginePort, Protocol: corev1.ProtocolTCP},
+				{Name: "api", ContainerPort: IncidentEngineAPIPort, Protocol: corev1.ProtocolTCP},
+			},
+			LivenessProbe: &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					HTTPGet: &corev1.HTTPGetAction{
+						Path: "/healthz",
+						Port: intstr.FromString("http"),
 					},
-					Ports: []corev1.ContainerPort{{
-						Name:          "http",
-						ContainerPort: IncidentEnginePort,
-						Protocol:      corev1.ProtocolTCP,
-					}},
-					LivenessProbe: &corev1.Probe{
-						ProbeHandler: corev1.ProbeHandler{
-							HTTPGet: &corev1.HTTPGetAction{
-								Path: "/healthz",
-								Port: intstr.FromString("http"),
-							},
-						},
-					},
-					Resources: resolveResources("PULSE_INCIDENT_ENGINE", incidentEngineResources),
-					VolumeMounts: []corev1.VolumeMount{
-						{Name: "probe-config", MountPath: "/etc/pulse", ReadOnly: true},
-						{Name: "probe-auth", MountPath: "/etc/pulse-auth", ReadOnly: true},
-					},
-				}},
-				Volumes: probeVolumes(),
+				},
+			},
+			Resources: resolveResources("PULSE_INCIDENT_ENGINE", incidentEngineResources),
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: "probe-config", MountPath: "/etc/pulse", ReadOnly: true},
+				{Name: "probe-auth", MountPath: "/etc/pulse-auth", ReadOnly: true},
 			},
 		}
+		podSpec.ImagePullSecrets = r.ProbeRunnerImagePullSecrets
+		podSpec.Containers = []corev1.Container{container}
+		podSpec.Volumes = probeVolumes()
+		deployment.Spec.Template.Labels = map[string]string{"app.kubernetes.io/name": IncidentEngineName}
+		deployment.Spec.Template.Spec = podSpec
 
 		return nil
 	})
@@ -316,7 +311,7 @@ func (r *CanaryReconciler) ensureIncidentEngine(ctx context.Context, wanted bool
 	}
 	logger.Info("Incident engine Deployment reconciled", "result", result)
 
-	return r.ensureNamedService(ctx, IncidentEngineName, IncidentEngineName, IncidentEnginePort, false)
+	return r.ensureNamedService(ctx, IncidentEngineName, IncidentEngineName, false)
 }
 
 // removeIncidentEngine deletes the engine once nothing references a policy.
@@ -371,11 +366,11 @@ func (r *CanaryReconciler) deleteIfPresent(ctx context.Context, object client.Ob
 	}
 }
 
-// ensureNamedService creates or updates one ClusterIP or headless Service.
+// ensureNamedService creates or updates a Service with compatible metrics and
+// operational API ports.
 func (r *CanaryReconciler) ensureNamedService(
 	ctx context.Context,
 	name, selector string,
-	port int32,
 	headless bool,
 ) error {
 	service := &corev1.Service{
@@ -392,12 +387,14 @@ func (r *CanaryReconciler) ensureNamedService(
 			service.Spec.Type = corev1.ServiceTypeClusterIP
 		}
 
-		service.Spec.Ports = []corev1.ServicePort{{
-			Name:       "http",
-			Port:       port,
-			TargetPort: intstr.FromString("http"),
-			Protocol:   corev1.ProtocolTCP,
-		}}
+		metricsPort, apiPort := ProbeRunnerPort, ProbeRunnerAPIPort
+		if name == IncidentEngineName {
+			metricsPort, apiPort = IncidentEnginePort, IncidentEngineAPIPort
+		}
+		service.Spec.Ports = []corev1.ServicePort{
+			{Name: "http", Port: int32(metricsPort), TargetPort: intstr.FromString("http"), Protocol: corev1.ProtocolTCP},
+			{Name: "api", Port: int32(apiPort), TargetPort: intstr.FromString("api"), Protocol: corev1.ProtocolTCP},
+		}
 
 		return nil
 	})
@@ -426,7 +423,7 @@ func probeVolumes() []corev1.Volume {
 
 // incidentEngineURL is the in-cluster address runners ship observations to.
 func (r *CanaryReconciler) incidentEngineURL() string {
-	return fmt.Sprintf("http://%s.%s.svc:%d", IncidentEngineName, r.Namespace, IncidentEnginePort)
+	return fmt.Sprintf("http://%s.%s.svc:%d", IncidentEngineName, r.Namespace, IncidentEngineAPIPort)
 }
 
 // anyProbeUsesIntelligence reports whether the engine is needed at all.

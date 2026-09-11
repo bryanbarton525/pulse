@@ -9,6 +9,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	canaryv1alpha1 "github.com/bryanbarton525/pulse/api/v1alpha1"
@@ -60,8 +62,12 @@ func (r *CanaryReconciler) syncPolicyModelStatus(
 	for index := range policies {
 		policy := &policies[index]
 		key := fmt.Sprintf("%s/%s", policy.Namespace, policy.Name)
+		referenceCount := references[key]
 		before := policy.Status.DeepCopy()
-		policy.Status.ReferencedBy = references[key]
+		policy.Status.ReferencedBy = referenceCount
+		if referenceCount == 0 {
+			policy.Status.InferredDependencies = nil
+		}
 		if len(keys) == 0 {
 			policy.Status.ResolvedHotModel = ""
 			policy.Status.ResolvedColdModel = ""
@@ -79,7 +85,21 @@ func (r *CanaryReconciler) syncPolicyModelStatus(
 		if reflect.DeepEqual(before, &policy.Status) {
 			continue
 		}
-		if err := r.Status().Update(ctx, policy); err != nil && !apierrors.IsNotFound(err) {
+		desired := policy.Status.DeepCopy()
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			var current canaryv1alpha1.AnomalyPolicy
+			if err := r.Get(ctx, types.NamespacedName{Namespace: policy.Namespace, Name: policy.Name}, &current); err != nil {
+				return err
+			}
+			// The model reconciler owns model fields and reference count. It only
+			// owns inferred dependencies when no canary references the policy.
+			inferred := current.Status.InferredDependencies
+			current.Status = *desired.DeepCopy()
+			if referenceCount > 0 {
+				current.Status.InferredDependencies = inferred
+			}
+			return r.Status().Update(ctx, &current)
+		}); err != nil && !apierrors.IsNotFound(err) {
 			logger.Error(err, "Failed to update AnomalyPolicy model status", "policy", key)
 		}
 	}

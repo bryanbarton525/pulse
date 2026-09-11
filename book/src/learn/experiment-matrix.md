@@ -1,5 +1,7 @@
 # Intelligence experiment matrix
 
+Before running operational API examples, complete [authenticated operational API access](../operational-api-access.md) and keep that port-forward active.
+
 ## Learning objective
 
 Run each supported failure shape manually, capture independent application evidence and Pulse evidence, and restore it before the next experiment. The matrix distinguishes deterministic validation from model contribution.
@@ -19,11 +21,9 @@ for canary in catalogue checkout search no-content login-journey mcp-tools simil
 done
 kubectl --context kind-pulse-book -n shop wait grpccanary/orders \
   --for=jsonpath='{.status.phase}'=Healthy --timeout=180s
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/results' |
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/results |
   python3 -m json.tool
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/incidents'
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/incidents
 ```
 
 For drift, require `driftState=ready` and its configured minimum sample count. For latency, require `latencyState=ready`. For novelty, wait beyond `settlingPeriodSeconds`. For failure correlation, mutations must occur within `windowSeconds`.
@@ -31,11 +31,9 @@ For drift, require `driftState=ready` and its configured minimum sample count. F
 After each mutation, use these inspections:
 
 ```sh
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/results' |
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/results |
   python3 -m json.tool
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/incidents' |
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/incidents |
   python3 -m json.tool
 kubectl --context kind-pulse-book -n pulse-system get --raw \
   '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/metrics' |

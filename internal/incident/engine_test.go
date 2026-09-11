@@ -23,6 +23,13 @@ type stubEmbedder struct {
 	vectors map[string][]float32
 }
 
+type identifiedEmbedder struct {
+	stubEmbedder
+	space string
+}
+
+func (s *identifiedEmbedder) Space() string { return s.space }
+
 type blockingNoveltyEmbedder struct {
 	mu      sync.Mutex
 	calls   int
@@ -715,6 +722,45 @@ func TestSetEmbedderWaitsForInFlightEmbedding(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("model swap did not complete after the embedding call finished")
+	}
+}
+
+func TestSetEmbedderPreservesStateForSameSpaceAndResetsForDifferentSpace(t *testing.T) {
+	t.Parallel()
+
+	first := &identifiedEmbedder{space: "space-a"}
+	engine := NewEngine(EngineOptions{
+		Embedder:       first,
+		Logger:         logr.Discard(),
+		WindowCapacity: 12,
+		MaxClusters:    7,
+	})
+	engine.window.Add(Candidate{Probe: "default/api"})
+	originalNovelty := engine.novelty
+
+	sameSpace := &identifiedEmbedder{space: "space-a"}
+	if retired := engine.SetEmbedder(sameSpace); retired != first {
+		t.Fatalf("same-space retired = %T, want first embedder", retired)
+	}
+	if engine.window.Len() != 1 {
+		t.Fatal("same-space swap cleared correlation candidates")
+	}
+	if engine.novelty != originalNovelty {
+		t.Fatal("same-space swap replaced novelty index")
+	}
+
+	differentSpace := &identifiedEmbedder{space: "space-b"}
+	if retired := engine.SetEmbedder(differentSpace); retired != sameSpace {
+		t.Fatalf("different-space retired = %T, want same-space embedder", retired)
+	}
+	if engine.window.Len() != 0 {
+		t.Fatal("different-space swap retained correlation candidates")
+	}
+	if engine.novelty == originalNovelty {
+		t.Fatal("different-space swap retained novelty index")
+	}
+	if engine.novelty.maxClusters != 7 {
+		t.Fatalf("new novelty maxClusters = %d, want 7", engine.novelty.maxClusters)
 	}
 }
 

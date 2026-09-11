@@ -2,10 +2,40 @@ package main
 
 import (
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestCatalogueJourneyCookieWorksOverDemoHTTP(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	catalogueRoutes(mux, newBehaviorState("healthy"))
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := server.Client()
+	client.Jar = jar
+	login, err := client.Get(server.URL + "/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = login.Body.Close()
+	session, err := client.Get(server.URL + "/session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Body.Close() }()
+	if session.StatusCode != http.StatusOK {
+		t.Fatalf("session after HTTP login returned %d, want 200", session.StatusCode)
+	}
+}
 
 func TestCatalogueJourneyRequiresCookieFromLogin(t *testing.T) {
 	t.Parallel()

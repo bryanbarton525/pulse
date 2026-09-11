@@ -28,6 +28,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	canaryv1alpha1 "github.com/bryanbarton525/pulse/api/v1alpha1"
@@ -65,10 +67,10 @@ type intelligenceView struct {
 // mounts a ConfigMap and a Secret and talks HTTP, which keeps its RBAC surface
 // empty even though it is the component holding a model and calling out to
 // third-party APIs.
-func (s *StatusSyncer) syncIncidents(ctx context.Context) {
+func (s *StatusSyncer) syncIncidents(ctx context.Context, token string) {
 	logger := log.FromContext(ctx).WithName("status-syncer")
 
-	incidents, err := s.fetchIncidents()
+	incidents, err := s.fetchIncidentsWithToken(token)
 	if err != nil {
 		// The engine is optional. A cluster with no AnomalyPolicy never
 		// deploys one, so a failure here is expected and not worth an error.
@@ -97,19 +99,18 @@ func (s *StatusSyncer) syncIncidents(ctx context.Context) {
 		view, involved := views[key]
 		next := viewStatus(view, involved)
 
-		if intelligenceStatusEqual(canary.Status.Intelligence, next) {
-			continue
-		}
-
-		s.emitIncidentEvent(canary, canary.Status.Intelligence, next, view)
-		canary.Status.Intelligence = next
-
-		if err := s.Status().Update(ctx, canary); err != nil {
+		previous := canary.Status.Intelligence.DeepCopy()
+		changed, err := s.updateHTTPIntelligenceStatus(ctx, types.NamespacedName{Namespace: canary.Namespace, Name: canary.Name}, next)
+		if err != nil {
 			if !errors.IsNotFound(err) {
 				logger.Error(err, "Failed to update intelligence status", "canary", key)
 			}
 			continue
 		}
+		if !changed {
+			continue
+		}
+		s.emitIncidentEvent(canary, previous, next, view)
 		updated++
 	}
 
@@ -120,19 +121,18 @@ func (s *StatusSyncer) syncIncidents(ctx context.Context) {
 		view, involved := views[key]
 		next := viewStatus(view, involved)
 
-		if intelligenceStatusEqual(canary.Status.Intelligence, next) {
-			continue
-		}
-
-		s.emitIncidentEvent(canary, canary.Status.Intelligence, next, view)
-		canary.Status.Intelligence = next
-
-		if err := s.Status().Update(ctx, canary); err != nil {
+		previous := canary.Status.Intelligence.DeepCopy()
+		changed, err := s.updateGRPCIntelligenceStatus(ctx, types.NamespacedName{Namespace: canary.Namespace, Name: canary.Name}, next)
+		if err != nil {
 			if !errors.IsNotFound(err) {
 				logger.Error(err, "Failed to update intelligence status", "grpccanary", key)
 			}
 			continue
 		}
+		if !changed {
+			continue
+		}
+		s.emitIncidentEvent(canary, previous, next, view)
 		updated++
 	}
 
@@ -141,7 +141,46 @@ func (s *StatusSyncer) syncIncidents(ctx context.Context) {
 			"openIncidents", len(incidents), "statusesUpdated", updated)
 	}
 
-	s.syncProposals(ctx)
+}
+
+func (s *StatusSyncer) updateHTTPIntelligenceStatus(ctx context.Context, key types.NamespacedName, next *canaryv1alpha1.CanaryIntelligenceStatus) (bool, error) {
+	changed := false
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var current canaryv1alpha1.HttpCanary
+		if err := s.Get(ctx, key, &current); err != nil {
+			return err
+		}
+		if !intelligenceStatusNeedsUpdate(current.Status.Intelligence, next) {
+			return nil
+		}
+		current.Status.Intelligence = next.DeepCopy()
+		if err := s.Status().Update(ctx, &current); err != nil {
+			return err
+		}
+		changed = true
+		return nil
+	})
+	return changed, err
+}
+
+func (s *StatusSyncer) updateGRPCIntelligenceStatus(ctx context.Context, key types.NamespacedName, next *canaryv1alpha1.CanaryIntelligenceStatus) (bool, error) {
+	changed := false
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var current canaryv1alpha1.GrpcCanary
+		if err := s.Get(ctx, key, &current); err != nil {
+			return err
+		}
+		if !intelligenceStatusNeedsUpdate(current.Status.Intelligence, next) {
+			return nil
+		}
+		current.Status.Intelligence = next.DeepCopy()
+		if err := s.Status().Update(ctx, &current); err != nil {
+			return err
+		}
+		changed = true
+		return nil
+	})
+	return changed, err
 }
 
 // buildIntelligenceViews indexes incident membership by probe.
@@ -242,11 +281,12 @@ func (s *StatusSyncer) emitIncidentEvent(
 //
 // Each policy sees only the edges touching its own canaries, so a team
 // reviewing proposals is not handed the whole cluster's topology.
-func (s *StatusSyncer) syncProposals(ctx context.Context) {
+func (s *StatusSyncer) syncProposals(ctx context.Context, token string) {
 	logger := log.FromContext(ctx).WithName("status-syncer")
 
-	proposals, err := s.fetchProposals()
-	if err != nil || len(proposals) == 0 {
+	proposals, err := s.fetchProposalsWithToken(token)
+	if err != nil {
+		logger.V(1).Info("Could not fetch dependency proposals", "error", err)
 		return
 	}
 
@@ -291,15 +331,24 @@ func (s *StatusSyncer) syncProposals(ctx context.Context) {
 			return relevant[i].To < relevant[j].To
 		})
 
-		if inferredEqual(policy.Status.InferredDependencies, relevant) {
-			continue
-		}
-
-		policy.Status.InferredDependencies = relevant
-		if err := s.Status().Update(ctx, policy); err != nil && !errors.IsNotFound(err) {
+		if err := s.updatePolicyProposals(ctx, types.NamespacedName{Namespace: policy.Namespace, Name: policy.Name}, relevant); err != nil && !errors.IsNotFound(err) {
 			logger.Error(err, "Failed to update AnomalyPolicy status", "policy", key)
 		}
 	}
+}
+
+func (s *StatusSyncer) updatePolicyProposals(ctx context.Context, key types.NamespacedName, relevant []canaryv1alpha1.InferredDependency) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var current canaryv1alpha1.AnomalyPolicy
+		if err := s.Get(ctx, key, &current); err != nil {
+			return err
+		}
+		if inferredEqual(current.Status.InferredDependencies, relevant) {
+			return nil
+		}
+		current.Status.InferredDependencies = relevant
+		return s.Status().Update(ctx, &current)
+	})
 }
 
 // policyOwners maps each canary to the policy governing it.
@@ -355,6 +404,21 @@ func intelligenceStatusEqual(left, right *canaryv1alpha1.CanaryIntelligenceStatu
 		left.Investigation == right.Investigation
 }
 
+// intelligenceStatusNeedsUpdate projects meaningful status changes immediately,
+// but limits a timestamp-only refresh to once per minute of signal time.
+func intelligenceStatusNeedsUpdate(current, next *canaryv1alpha1.CanaryIntelligenceStatus) bool {
+	if !intelligenceStatusEqual(current, next) {
+		return true
+	}
+	if current == nil {
+		return false
+	}
+	if current.LastSignalTime == nil || next.LastSignalTime == nil {
+		return current.LastSignalTime != next.LastSignalTime
+	}
+	return !next.LastSignalTime.Time.Before(current.LastSignalTime.Add(time.Minute))
+}
+
 func boolPointerEqual(left, right *bool) bool {
 	if left == nil || right == nil {
 		return left == right
@@ -378,25 +442,32 @@ func inferredEqual(left, right []canaryv1alpha1.InferredDependency) bool {
 }
 
 // fetchIncidents polls the incident engine's open incidents.
-func (s *StatusSyncer) fetchIncidents() ([]incident.Incident, error) {
+func (s *StatusSyncer) fetchIncidentsWithToken(token string) ([]incident.Incident, error) {
 	var incidents []incident.Incident
-	err := s.fetchJSON(s.incidentEngineURL()+"/incidents", &incidents)
+	err := s.fetchJSONWithToken(s.incidentEngineURL()+"/incidents", &incidents, token)
 	return incidents, err
 }
 
 // fetchProposals polls the engine's learned dependency edges.
-func (s *StatusSyncer) fetchProposals() ([]incident.Proposal, error) {
+func (s *StatusSyncer) fetchProposalsWithToken(token string) ([]incident.Proposal, error) {
 	var topology struct {
 		Proposals []incident.Proposal `json:"proposals"`
 	}
-	err := s.fetchJSON(s.incidentEngineURL()+"/topology", &topology)
+	err := s.fetchJSONWithToken(s.incidentEngineURL()+"/topology", &topology, token)
 	return topology.Proposals, err
 }
 
-func (s *StatusSyncer) fetchJSON(url string, target any) error {
+func (s *StatusSyncer) fetchJSONWithToken(url string, target any, token string) error {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
-	response, err := httpClient.Get(url)
+	request, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("building GET %s: %w", url, err)
+	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	response, err := httpClient.Do(request)
 	if err != nil {
 		return fmt.Errorf("GET %s: %w", url, err)
 	}
@@ -418,5 +489,5 @@ func (s *StatusSyncer) incidentEngineURL() string {
 		return s.IncidentEngineURL
 	}
 
-	return fmt.Sprintf("http://%s.%s.svc:%d", IncidentEngineName, s.Namespace, IncidentEnginePort)
+	return fmt.Sprintf("http://%s.%s.svc:%d", IncidentEngineName, s.Namespace, IncidentEngineAPIPort)
 }

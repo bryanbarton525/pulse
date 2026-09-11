@@ -1,5 +1,7 @@
 # Correlate failures into incidents
 
+Before running operational API examples, complete [authenticated operational API access](../operational-api-access.md) and keep that port-forward active.
+
 ## Learning objective
 
 Prove two independent merge paths—declared topology and MiniLM similarity—then inspect onset ordering, membership, root selection, merge evidence, and topology proposals without treating any heuristic as causation.
@@ -70,8 +72,7 @@ Require a log line that the failure-path model loaded. A Ready engine with a mod
 First inspect active topology:
 
 ```sh
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/topology' |
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/topology |
   python3 -m json.tool
 ```
 
@@ -105,8 +106,7 @@ for canary in catalogue checkout search unrelated; do
   kubectl --context kind-pulse-book -n shop wait httpcanary/"$canary" \
     --for=jsonpath='{.status.phase}'=Unhealthy --timeout=180s
 done
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/incidents' \
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/incidents \
   > /tmp/pulse-book-incidents.json
 python3 -m json.tool /tmp/pulse-book-incidents.json
 for canary in catalogue checkout search unrelated; do
@@ -163,8 +163,7 @@ for canary in similar-a similar-b; do
 done
 kubectl --context kind-pulse-book -n shop wait grpccanary/orders \
   --for=jsonpath='{.status.phase}'=Unhealthy --timeout=180s
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/incidents' |
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/incidents |
   python3 -m json.tool
 ```
 
@@ -175,8 +174,7 @@ MiniLM contributes WordPiece tokenization, transformer inference, attention-mask
 ## Inspect onsets, membership, and proposals
 
 ```sh
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/incidents' |
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/incidents |
   python3 -c '
 import json,sys
 for incident in json.load(sys.stdin):
@@ -185,8 +183,7 @@ for incident in json.load(sys.stdin):
         print(" ", member["probe"], member["role"], member["signal"]["at"])
     for evidence in incident.get("mergeEvidence", []):
         print(" ", evidence)'
-kubectl --context kind-pulse-book -n pulse-system get --raw \
-  '/api/v1/namespaces/pulse-system/services/http:pulse-incident-engine:9090/proxy/topology' |
+curl --fail --max-time 5 -H "Authorization: Bearer $PULSE_INTERNAL_TOKEN" http://127.0.0.1:19091/topology |
   python3 -m json.tool
 kubectl --context kind-pulse-book -n pulse-system get anomalypolicy demo-triage -o yaml
 ```

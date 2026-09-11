@@ -52,5 +52,8 @@ hack/models/**
 /book/src/vendor/
 
 # Local codebase analysis and editor workspace
-/graphify-out/
+/graphify-out/*
+!/graphify-out/GRAPH_REPORT.md
+!/graphify-out/manifest.json
+!/graphify-out/cost.json
 /cmd/homelab.code-workspace
