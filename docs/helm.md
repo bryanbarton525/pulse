@@ -10,7 +10,7 @@ Tagged releases also publish a packaged chart as a GitHub Release asset, along w
 
 ## Basic Install
 
-Images are published under the Pulse repository on GHCR (`ghcr.io/bryanbarton525/pulse/...`). `make helm-deploy` applies `config/crd/bases/` first because Helm does not upgrade CRDs that already exist.
+Images are published under the Pulse repository on GHCR (`ghcr.io/bryanbarton525/pulse/...`). `make helm-deploy` applies `config/crd/bases/` first because Helm does not upgrade CRDs that already exist. Its subsequent Helm command uses `--skip-crds` so Helm does not also apply packaged schemas or compete for CRD field ownership. No forced ownership or CRD deletion is used.
 
 ```bash
 make helm-deploy \

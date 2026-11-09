@@ -562,6 +562,7 @@ helm-deploy: install-helm ## Deploy manager to the K8s cluster via Helm. Specify
 	engine_tag="$${incident_engine_image##*:}"; \
 	set -- \
 		--namespace $(HELM_NAMESPACE) \
+		--skip-crds \
 		--set manager.image.repository="$$controller_repo" \
 		--set manager.image.tag="$$controller_tag" \
 		--set manager.probeRunnerImage.repository="$$probe_repo" \
