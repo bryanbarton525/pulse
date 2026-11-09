@@ -34,7 +34,7 @@ jobs:
           cache: npm
           cache-dependency-path: book/package-lock.json
       - name: Prepare bundled diagrams
-        run: npm ci --prefix book --ignore-scripts && npm run --prefix book assets
+        run: npm ci --prefix book --ignore-scripts && npm test --prefix book && npm run --prefix book assets
       - name: Install pinned mdBook
         env:
           MDBOOK_VERSION: '0.4.52'
@@ -49,6 +49,8 @@ jobs:
           echo "$RUNNER_TEMP/mdbook-bin" >> "$GITHUB_PATH"
       - name: Build book
         run: mdbook build && python3 book/check-links.py
+      - name: Verify real diagrams and browser sanitizer
+        run: npm run --prefix book test:browser
       - name: Package reproducible preview
         run: |
           tar --sort=name --mtime='UTC 1970-01-01' \
