@@ -2,9 +2,11 @@
   "name": "pulse-book-assets",
   "private": true,
   "scripts": {
-    "assets": "node prepare-assets.cjs"
+    "assets": "node prepare-assets.cjs",
+    "test": "node --test prepare-assets.test.cjs",
+    "test:browser": "node browser-security-smoke.mjs"
   },
   "devDependencies": {
-    "mermaid": "11.17.2"
+    "mermaid": "12.3.0"
   }
 }
