@@ -5,6 +5,6 @@
     "assets": "node prepare-assets.cjs"
   },
   "devDependencies": {
-    "mermaid": "11.17.2"
+    "mermaid": "12.3.0"
   }
 }
